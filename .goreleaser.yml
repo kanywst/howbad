@@ -1,0 +1,86 @@
+version: 2
+
+project_name: howbad
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: howbad
+    binary: howbad
+    main: ./
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X github.com/kanywst/howbad/cmd.version={{ .Version }}
+
+archives:
+  - formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "{{ .ProjectName }}-{{ .Version }}-checksums.txt"
+
+release:
+  prerelease: auto
+  replace_existing_artifacts: true
+
+homebrew_casks:
+  - name: howbad
+    binaries:
+      - howbad
+    # Unsigned binary: Gatekeeper deletes a quarantined copy on first run.
+    custom_block: |
+      postflight_steps do
+        on_macos do
+          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ "{{" }}staged_path{{ "}}" }}/howbad"]
+        end
+      end
+    homepage: "https://github.com/kanywst/howbad"
+    description: "If a coding agent on this machine got hijacked, how bad would it be?"
+    repository:
+      owner: kanywst
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    commit_msg_template: "chore(cask): {{ .ProjectName }} {{ .Tag }}"
+
+sboms:
+  - artifacts: archive
+
+# cosign 3.x writes a single Sigstore bundle instead of .sig + .pem.
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - "sign-blob"
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+nfpms:
+  - maintainer: kanywst
+    description: "If a coding agent on this machine got hijacked, how bad would it be?"
+    homepage: https://github.com/kanywst/howbad
+    license: Apache-2.0
+    formats:
+      - deb
+      - rpm
