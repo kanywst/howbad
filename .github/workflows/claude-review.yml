@@ -94,9 +94,10 @@ jobs:
             comment for the summary. Cite `file:line`. If the diff is clean against all of
             the above, say so in one line rather than manufacturing nits.
 
-            Write the summary to a file and post it with `gh pr comment --body-file <path>`.
-            An inline heredoc or command substitution does not match the allowlist and is
-            refused. Do not sign anything you post: no "Generated with" footer and no
+            Create the summary file with the Write tool, then post it with exactly one command:
+            `gh pr comment <number> --body-file <path>`. printf, echo, heredocs, command
+            substitution and chained commands (`;`, `&&`) do not match the allowlist and are
+            refused. Leave the file in place; the runner is discarded. Do not sign anything you post: no "Generated with" footer and no
             co-authored-by line.
 
           # --allowedTools is a closed list: the read tools must be named too.
