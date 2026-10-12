@@ -1,3 +1,5 @@
+<img src="./assets/logo.svg" align="right" width="120" alt="howbad logo" />
+
 # howbad
 
 **English** | [日本語](README.ja.md)
