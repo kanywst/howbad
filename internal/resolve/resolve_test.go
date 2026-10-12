@@ -398,7 +398,7 @@ func TestNPMLookalikeRegistryNotCalled(t *testing.T) {
 			t.Fatalf("%s: %+v", reg, f)
 		}
 	}
-	c := cred.New(cred.NPM, "$NPM_TOKEN", "env", "0b5c6f7e-1234-5678-9abc-def012345678")
+	c := cred.New(cred.NPM, "$NPM_TOKEN", "env", strings.Join([]string{"aaaaaaaa", "bbbb", "cccc", "dddd", "eeeeeeeeeeee"}, "-"))
 	if f := One(context.Background(), c, o); f.Status != finding.Unverified {
 		t.Fatalf("unprefixed token with no registry must not go to npmjs: %+v", f)
 	}
