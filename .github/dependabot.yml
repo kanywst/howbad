@@ -1,0 +1,46 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tokyo
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - go
+    commit-message:
+      prefix: chore
+      include: scope
+    # AWS SDK and Kubernetes modules must move together.
+    groups:
+      aws:
+        patterns:
+          - github.com/aws/*
+      kubernetes:
+        patterns:
+          - k8s.io/*
+          - sigs.k8s.io/*
+      charm:
+        patterns:
+          - github.com/charmbracelet/*
+      cobra:
+        patterns:
+          - github.com/spf13/*
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tokyo
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: ci
+      include: scope
