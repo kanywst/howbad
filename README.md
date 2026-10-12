@@ -1,5 +1,7 @@
 # howbad
 
+**English** | [日本語](README.ja.md)
+
 [![CI](https://github.com/kanywst/howbad/actions/workflows/ci.yml/badge.svg)](https://github.com/kanywst/howbad/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/kanywst/howbad.svg)](https://pkg.go.dev/github.com/kanywst/howbad)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
