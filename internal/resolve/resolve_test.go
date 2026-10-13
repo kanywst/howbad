@@ -659,3 +659,18 @@ func TestGitLabAdminReadAndMinorScopes(t *testing.T) {
 		t.Fatalf("minor scopes must each be reported: %+v", f)
 	}
 }
+
+func TestGitLabUnreadableUserKeepsAdminReadPossible(t *testing.T) {
+	tok := "glpat-" + strings.Repeat("y", 20)
+	o := server(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/user" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		fmt.Fprint(w, `{"scopes":["read_repository"],"user_id":3,"active":true}`)
+	})
+	f := One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), o)
+	if !hasWhat(f, "if an administrator") || !f.Reach[0].Inferred {
+		t.Fatalf("admin read must stay possible when /user is unreadable: %+v", f)
+	}
+}

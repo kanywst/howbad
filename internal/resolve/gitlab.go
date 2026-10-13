@@ -70,8 +70,9 @@ func gitlab(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 		IsAdmin  bool   `json:"is_admin"`
 	}
 	who := fmt.Sprintf("user #%d", tok.UserID)
+	known := false
 	if _, st, err := getJSON(ctx, o.HTTP, base+"/user", auth, &user); err == nil && st/100 == 2 && user.Username != "" {
-		who = user.Username
+		who, known = user.Username, true
 	}
 	f.Status, f.Identity = finding.OK, who+" on "+host
 
@@ -80,11 +81,12 @@ func gitlab(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 		f.Reach = append(f.Reach, finding.Capability{Severity: finding.Critical, What: "push code to every GitLab project " + who + " can write to (fine-grained or unlisted permissions, not read back)", Inferred: true})
 		return f
 	}
-	gitlabScopes(&f, who, host, tok.Scopes, user.IsAdmin)
+	gitlabScopes(&f, who, host, tok.Scopes, user.IsAdmin, known)
 	return f
 }
 
-func gitlabScopes(f *finding.Finding, who, host string, list []string, admin bool) {
+// known is false when /user could not be read, so admin is unknown.
+func gitlabScopes(f *finding.Finding, who, host string, list []string, admin, known bool) {
 	scopes := map[string]bool{}
 	for _, s := range list {
 		scopes[s] = true
@@ -105,6 +107,8 @@ func gitlabScopes(f *finding.Finding, who, host string, list []string, admin boo
 		if admin {
 			// Without Admin Mode an administrator reads every project.
 			f.Add(finding.High, "read every private project on the GitLab instance "+host+" (administrator)")
+		} else if !known {
+			f.Reach = append(f.Reach, finding.Capability{Severity: finding.High, What: "read every private GitLab project " + who + " can see (every project on " + host + " if an administrator)", Inferred: true})
 		} else {
 			f.Add(finding.High, "read every private GitLab project "+who+" can see")
 		}
