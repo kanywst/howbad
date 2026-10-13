@@ -536,8 +536,12 @@ func TestGitLabScopes(t *testing.T) {
 		t.Fatalf("read-only token: %+v", f)
 	}
 
-	f = One(context.Background(), cred.New(cred.GitLab, "x", "y", "glpat-wrong-"+strings.Repeat("w", 20)), o)
-	if f.Status != finding.Invalid {
+	wrong := cred.New(cred.GitLab, "x", "y", "glpat-wrong-"+strings.Repeat("w", 20))
+	if f = One(context.Background(), wrong, o); f.Status != finding.Unverified || len(f.Reach) == 0 {
+		t.Fatalf("a gitlab.com 401 with no host configured may be a self-managed token: %+v", f)
+	}
+	wrong.Ref = map[string]string{"host": "gitlab.com"}
+	if f = One(context.Background(), wrong, o); f.Status != finding.Invalid {
 		t.Fatalf("revoked token: %+v", f)
 	}
 }

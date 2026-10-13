@@ -48,8 +48,14 @@ func gitlab(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 		// /self rejects some live non-personal tokens; only call it dead if
 		// /user rejects it too.
 		_, st, err := getJSON(ctx, o.HTTP, base+"/user", auth, nil)
+		if err == nil && st == http.StatusUnauthorized && c.Ref["host"] == "" {
+			// No host was configured: a self-managed token lands here too.
+			f.Status, f.Detail = finding.Unverified, "gitlab.com rejected the token; it may be revoked or belong to a self-managed GitLab"
+			f.Reach = append(f.Reach, finding.Capability{Severity: finding.High, What: "use a GitLab token on whichever instance issued it", Inferred: true})
+			return f
+		}
 		if err == nil && st == http.StatusUnauthorized {
-			f.Status, f.Detail = finding.Invalid, "GitLab rejected the token (revoked or expired)"
+			f.Status, f.Detail = finding.Invalid, host+" rejected the token (revoked or expired)"
 			return f
 		}
 	}
