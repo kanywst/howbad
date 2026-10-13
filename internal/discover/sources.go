@@ -53,6 +53,9 @@ func fromEnv(env Env) []cred.Credential {
 			}
 			c.Ref = githubHostRef(k, host)
 		}
+		if kind == cred.GitLab {
+			c.Ref = gitlabHostRef(env.Vars)
+		}
 		out = append(out, c)
 	}
 	if p := env.Vars["GOOGLE_APPLICATION_CREDENTIALS"]; p != "" && exists(p) {

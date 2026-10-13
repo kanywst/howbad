@@ -58,8 +58,9 @@ flowchart LR
 | Slack | MCP 設定、環境変数 | メッセージ履歴、検索、あなたとしての投稿 |
 | AWS | `~/.aws/config`、`~/.aws/credentials`、環境変数、MCP 設定 | ID、アカウント、アタッチされたポリシー(または SSO の permission set) |
 | Kubernetes | kubeconfig | コンテキストごとの cluster-admin、Secret、exec、Pod 作成 |
+| GitLab | `$GITLAB_TOKEN` などの環境変数、MCP 設定(ホストは `GITLAB_HOST` / `GITLAB_API_URL` から) | トークンの scope: push、CI/CD、レジストリ、Runner、Kubernetes agent、管理者権限 |
 | Google Cloud | gcloud の設定、Application Default Credentials、`$GOOGLE_APPLICATION_CREDENTIALS` | アカウントとプロジェクト(role はまだ) |
-| Stripe、OpenAI、Anthropic、Google API キー、GitLab、Hugging Face、データベース URL | 環境変数、MCP 設定 | 形式で判別するだけで、問い合わせはしない |
+| Stripe、OpenAI、Anthropic、Google API キー、Hugging Face、データベース URL | 環境変数、MCP 設定 | 形式で判別するだけで、問い合わせはしない |
 
 読むエージェント設定は Claude Code、Codex、Cursor、Gemini CLI、VS Code、Windsurf、Devin Desktop、Claude Desktop です。確認なしで動く設定のエージェント(Claude Code の `bypassPermissions`、Codex の `danger-full-access`)もレポートで目立たせます。
 

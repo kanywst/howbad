@@ -109,6 +109,10 @@ func TestSecretNeverSerialized(t *testing.T) {
 	if strings.Contains(string(b), tok) {
 		t.Fatalf("secret leaked into JSON: %s", b)
 	}
+	gl := "glpat-" + strings.Repeat("s", 20)
+	if b, _ = json.Marshal(New(GitLab, "gl", "src", gl)); strings.Contains(string(b), gl) {
+		t.Fatalf("GitLab secret leaked into JSON: %s", b)
+	}
 	aws := NewAWSStatic("env", "env", "AKIAABCDEFGHIJKLMNOP", "topsecretkeymaterial", "")
 	b, _ = json.Marshal(aws)
 	if strings.Contains(string(b), "topsecretkeymaterial") || strings.Contains(string(b), "AKIAABCDEFGHIJKL") {
