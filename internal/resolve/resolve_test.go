@@ -25,7 +25,7 @@ func server(t *testing.T, h http.HandlerFunc) Options {
 	t.Helper()
 	s := httptest.NewServer(h)
 	t.Cleanup(s.Close)
-	return Options{HTTP: s.Client(), GitHubAPI: s.URL, NPMRegistry: s.URL, SlackAPI: s.URL}
+	return Options{HTTP: s.Client(), GitHubAPI: s.URL, NPMRegistry: s.URL, SlackAPI: s.URL, GitLabAPI: s.URL}
 }
 
 func requireBearer(t *testing.T, r *http.Request, tok string) bool {
@@ -501,5 +501,117 @@ func TestNoExecKeepsAGuess(t *testing.T) {
 	k := cred.Credential{Kind: cred.Kube, Ref: map[string]string{"context": "c", "exec": "aws"}}
 	if f := One(context.Background(), k, o); len(f.Reach) == 0 {
 		t.Fatalf("--no-exec kube skip has no reach: %+v", f)
+	}
+}
+
+func gitlabServer(t *testing.T, tok, self string) Options {
+	t.Helper()
+	return server(t, func(w http.ResponseWriter, r *http.Request) {
+		if !requireBearer(t, r, tok) || r.Header.Get("PRIVATE-TOKEN") != "" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch r.URL.Path {
+		case "/personal_access_tokens/self":
+			fmt.Fprint(w, self)
+		case "/user":
+			fmt.Fprint(w, `{"username":"me","is_admin":false}`)
+		default:
+			t.Errorf("unexpected GitLab call %s", r.URL)
+		}
+	})
+}
+
+func TestGitLabScopes(t *testing.T) {
+	tok := "glpat-" + strings.Repeat("g", 20)
+	o := gitlabServer(t, tok, `{"scopes":["api","self_rotate"],"user_id":7,"active":true}`)
+	f := One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), o)
+	if f.Status != finding.OK || f.Identity != "me on gitlab.com" || f.Severity() != finding.Critical || !hasWhat(f, "CI/CD") || !hasWhat(f, "rotate") {
+		t.Fatalf("%+v", f)
+	}
+
+	o = gitlabServer(t, tok, `{"scopes":["read_repository"],"user_id":7,"active":true}`)
+	f = One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), o)
+	if f.Severity() != finding.High || !hasWhat(f, "read every private") {
+		t.Fatalf("read-only token: %+v", f)
+	}
+
+	f = One(context.Background(), cred.New(cred.GitLab, "x", "y", "glpat-wrong-"+strings.Repeat("w", 20)), o)
+	if f.Status != finding.Invalid {
+		t.Fatalf("revoked token: %+v", f)
+	}
+}
+
+func TestGitLabFineGrainedIsUpperBound(t *testing.T) {
+	tok := "glpat-" + strings.Repeat("f", 20)
+	o := gitlabServer(t, tok, `{"scopes":[],"granular_scopes":[{"access":"all_memberships"}],"user_id":7,"active":true}`)
+	f := One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), o)
+	if f.Severity() != finding.Critical || !f.Reach[0].Inferred {
+		t.Fatalf("fine-grained token must report the owner's reach as inferred: %+v", f)
+	}
+}
+
+func TestGitLabSelfUnavailableIsUpperBound(t *testing.T) {
+	tok := "glpat-" + strings.Repeat("p", 20)
+	o := server(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) })
+	f := One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), o)
+	if f.Status != finding.Partial || f.Severity() != finding.Critical || !f.Reach[0].Inferred {
+		t.Fatalf("%+v", f)
+	}
+}
+
+func TestGitLabRepoLocalHostIsNotDialed(t *testing.T) {
+	o := server(t, func(_ http.ResponseWriter, r *http.Request) { t.Errorf("dialed %s", r.URL) })
+	c := cred.New(cred.GitLab, "x", "./.mcp.json", "glpat-"+strings.Repeat("r", 20))
+	c.Ref = map[string]string{"host": "127.0.0.1:9"}
+	c.RepoLocal = true
+	if f := One(context.Background(), c, o); f.Status != finding.Unverified {
+		t.Fatalf("%+v", f)
+	}
+}
+
+func TestGitLabTokenDoesNotFollowRedirect(t *testing.T) {
+	tok := "glpat-" + strings.Repeat("d", 20)
+	other := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.Header.Get("Authorization")+r.Header.Get("PRIVATE-TOKEN"), tok) {
+			t.Errorf("token followed a redirect to another host")
+		}
+	}))
+	t.Cleanup(other.Close)
+	target := strings.Replace(other.URL, "127.0.0.1", "localhost", 1)
+	o := server(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target+r.URL.Path, http.StatusFound)
+	})
+	One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), o)
+}
+
+func TestGitLabAdminAndRegistry(t *testing.T) {
+	tok := "glpat-" + strings.Repeat("a", 20)
+	o := server(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/user" {
+			fmt.Fprint(w, `{"username":"root","is_admin":true}`)
+			return
+		}
+		fmt.Fprint(w, `{"scopes":["api"],"user_id":1,"active":true}`)
+	})
+	if f := One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), o); !hasWhat(f, "administer the GitLab instance") {
+		t.Fatalf("admin api token: %+v", f)
+	}
+	o = gitlabServer(t, tok, `{"scopes":["read_registry"],"user_id":7,"active":true}`)
+	if f := One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), o); !hasWhat(f, "pull private container images") {
+		t.Fatalf("read_registry: %+v", f)
+	}
+	o = gitlabServer(t, tok, `{"scopes":[],"granular_scopes":{"x":1},"user_id":7,"active":true}`)
+	if f := One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), o); f.Status != finding.OK || f.Severity() != finding.Critical {
+		t.Fatalf("object granular_scopes / empty scopes: %+v", f)
+	}
+}
+
+func TestGitLabUnknownHostIsNotSent(t *testing.T) {
+	o := server(t, func(_ http.ResponseWriter, r *http.Request) { t.Errorf("dialed %s", r.URL) })
+	c := cred.New(cred.GitLab, "x", "y", "glpat-"+strings.Repeat("u", 20))
+	c.Ref = map[string]string{"host": "unknown-self-managed"}
+	if f := One(context.Background(), c, o); f.Status != finding.Unverified {
+		t.Fatalf("%+v", f)
 	}
 }

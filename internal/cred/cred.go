@@ -140,15 +140,18 @@ func Merge(in []Credential) []Credential {
 	return out
 }
 
+var defaultHost = map[Kind]string{GitHub: "github.com", GitLab: "gitlab.com"}
+
 func refConflict(kind Kind, a, b map[string]string) bool {
-	// A GitHub token with no host is a github.com token.
-	if kind == GitHub {
+	// A token with no host belongs to the public instance, so a repo-local
+	// host cannot be merged onto it.
+	if def, ok := defaultHost[kind]; ok {
 		ha, hb := a["host"], b["host"]
 		if ha == "" {
-			ha = "github.com"
+			ha = def
 		}
 		if hb == "" {
-			hb = "github.com"
+			hb = def
 		}
 		if ha != hb {
 			return true
