@@ -538,7 +538,7 @@ func TestGitLabScopes(t *testing.T) {
 
 	wrong := cred.New(cred.GitLab, "x", "y", "glpat-wrong-"+strings.Repeat("w", 20))
 	// A 401 may mean another instance issued it: never report it dead.
-	if f = One(context.Background(), wrong, o); f.Status != finding.Unverified || len(f.Reach) == 0 {
+	if f = One(context.Background(), wrong, o); f.Status != finding.Unverified || f.Severity() != finding.Critical || !f.Reach[0].Inferred {
 		t.Fatalf("rejected token: %+v", f)
 	}
 }

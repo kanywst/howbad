@@ -50,7 +50,7 @@ func gitlab(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 		_, st, err := getJSON(ctx, o.HTTP, base+"/user", auth, nil)
 		if err == nil && st == http.StatusUnauthorized {
 			f.Status, f.Detail = finding.Unverified, host+" rejected the token; it may be revoked or issued by another GitLab instance"
-			f.Reach = append(f.Reach, finding.Capability{Severity: finding.High, What: "use a GitLab token on whichever instance issued it", Inferred: true})
+			f.Reach = append(f.Reach, finding.Capability{Severity: finding.Critical, What: "push code to every GitLab project the token's owner can write to, on whichever instance issued it", Inferred: true})
 			return f
 		}
 	}
