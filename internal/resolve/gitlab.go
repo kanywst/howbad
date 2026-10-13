@@ -130,10 +130,11 @@ func gitlabScopes(f *finding.Finding, who, host string, list []string, admin boo
 	if scopes["ai_features"] {
 		f.Add(finding.Low, "use GitLab Duo as "+who+" (code and chat on "+who+"'s AI seat)")
 	}
-	if scopes["read_service_ping"] && admin {
+	// Only administrators can hold this scope, so no /user check is needed.
+	if scopes["read_service_ping"] {
 		f.Add(finding.Low, "download "+host+"'s Service Ping usage data")
 	}
-	if scopes["read_user"] && len(f.Reach) == 0 {
+	if scopes["read_user"] {
 		f.Add(finding.Low, "read "+who+"'s profile, including private email, and list users on "+host)
 	}
 	var rest []string

@@ -654,8 +654,8 @@ func TestGitLabAdminReadAndMinorScopes(t *testing.T) {
 	if f := One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), o); !hasWhat(f, "private email") || hasWhat(f, "public data only") {
 		t.Fatalf("read_user: %+v", f)
 	}
-	o = gitlabServer(t, tok, `{"scopes":["ai_features"],"user_id":7,"active":true}`)
-	if f := One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), o); !hasWhat(f, "GitLab Duo") {
-		t.Fatalf("ai_features: %+v", f)
+	o = gitlabServer(t, tok, `{"scopes":["ai_features","read_user","read_service_ping"],"user_id":7,"active":true}`)
+	if f := One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), o); !hasWhat(f, "GitLab Duo") || !hasWhat(f, "private email") || !hasWhat(f, "Service Ping") {
+		t.Fatalf("minor scopes must each be reported: %+v", f)
 	}
 }
