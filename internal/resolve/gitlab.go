@@ -37,7 +37,7 @@ func gitlab(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 		Scopes        []string        `json:"scopes"`
 		GranularScope json.RawMessage `json:"granular_scopes"`
 		UserID        int             `json:"user_id"`
-		Active        bool            `json:"active"`
+		Active        *bool           `json:"active"`
 		Revoked       bool            `json:"revoked"`
 	}
 	_, status, err := getJSON(ctx, o.HTTP, base+"/personal_access_tokens/self", auth, &tok)
@@ -45,10 +45,15 @@ func gitlab(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 		return netFailure(f, err)
 	}
 	if status == http.StatusUnauthorized {
-		f.Status, f.Detail = finding.Invalid, "GitLab rejected the token (revoked or expired)"
-		return f
+		// /self rejects some live non-personal tokens; only call it dead if
+		// /user rejects it too.
+		_, st, err := getJSON(ctx, o.HTTP, base+"/user", auth, nil)
+		if err == nil && st == http.StatusUnauthorized {
+			f.Status, f.Detail = finding.Invalid, "GitLab rejected the token (revoked or expired)"
+			return f
+		}
 	}
-	if status/100 == 2 && (tok.Revoked || !tok.Active) {
+	if status/100 == 2 && (tok.Revoked || (tok.Active != nil && !*tok.Active)) {
 		f.Status, f.Detail = finding.Invalid, "GitLab reports the token as inactive"
 		return f
 	}

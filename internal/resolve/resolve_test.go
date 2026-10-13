@@ -615,3 +615,22 @@ func TestGitLabUnknownHostIsNotSent(t *testing.T) {
 		t.Fatalf("%+v", f)
 	}
 }
+
+func TestGitLabSelfRejectedButUserAccepted(t *testing.T) {
+	tok := "glpat-" + strings.Repeat("n", 20)
+	o := server(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/user" && requireBearer(t, r, tok) {
+			fmt.Fprint(w, `{"username":"me"}`)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	f := One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), o)
+	if f.Status != finding.Partial || f.Severity() != finding.Critical || !f.Reach[0].Inferred {
+		t.Fatalf("live token reported dead: %+v", f)
+	}
+	o = gitlabServer(t, tok, `{"scopes":["api"],"user_id":7}`)
+	if f := One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), o); f.Status != finding.OK {
+		t.Fatalf("missing active field read as inactive: %+v", f)
+	}
+}
