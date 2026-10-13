@@ -2,6 +2,7 @@ package cred
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -148,5 +149,22 @@ func TestMergeGitHubDefaultHost(t *testing.T) {
 func TestRedactURLs(t *testing.T) {
 	if got := RedactURLs("https://user:pw@k8s.corp:6443"); strings.Contains(got, "pw") {
 		t.Fatal(got)
+	}
+}
+
+func TestSecretNeverFormatted(t *testing.T) {
+	tok := "glpat-" + strings.Repeat("f", 20)
+	c := New(GitLab, "gl", "src", tok)
+	type wrapper struct{ C Credential }
+	for _, out := range []string{
+		fmt.Sprintf("%v", c), fmt.Sprintf("%+v", c), fmt.Sprintf("%#v", c), fmt.Sprintf("%s", c),
+		fmt.Sprintf("%+v", &c), fmt.Sprintf("%+v", wrapper{c}), fmt.Sprintf("%+v", []Credential{c}),
+	} {
+		if strings.Contains(out, tok) || strings.Contains(out, "ffffffff") {
+			t.Fatalf("secret leaked into a format string: %s", out)
+		}
+	}
+	if !strings.Contains(fmt.Sprintf("%+v", c), "Kind:gitlab") {
+		t.Fatalf("redacted output lost the other fields: %+v", c)
 	}
 }
