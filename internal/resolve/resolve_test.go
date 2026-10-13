@@ -537,12 +537,9 @@ func TestGitLabScopes(t *testing.T) {
 	}
 
 	wrong := cred.New(cred.GitLab, "x", "y", "glpat-wrong-"+strings.Repeat("w", 20))
+	// A 401 may mean another instance issued it: never report it dead.
 	if f = One(context.Background(), wrong, o); f.Status != finding.Unverified || len(f.Reach) == 0 {
-		t.Fatalf("a gitlab.com 401 with no host configured may be a self-managed token: %+v", f)
-	}
-	wrong.Ref = map[string]string{"host": "gitlab.com"}
-	if f = One(context.Background(), wrong, o); f.Status != finding.Invalid {
-		t.Fatalf("revoked token: %+v", f)
+		t.Fatalf("rejected token: %+v", f)
 	}
 }
 
