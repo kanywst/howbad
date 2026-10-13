@@ -3,6 +3,7 @@ package cred
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"regexp"
 	"sort"
 	"strings"
@@ -46,7 +47,8 @@ func Known(name string) bool {
 	return false
 }
 
-// The secret is unexported so it cannot reach JSON or a format string.
+// The secret is unexported so it cannot reach JSON; Format keeps it out of
+// format strings.
 type Credential struct {
 	Kind        Kind              `json:"kind"`
 	Via         string            `json:"via"`
@@ -81,6 +83,17 @@ func NewAWSStatic(via, source, keyID, secretKey, sessionToken string) Credential
 }
 
 func (c Credential) Secret() string { return c.secret }
+
+// Format keeps the secret out of %v, %+v and %#v, which print unexported
+// fields, including when a Credential is nested in another struct.
+func (c Credential) Format(s fmt.State, verb rune) {
+	type plain Credential
+	p := plain(c)
+	if p.secret != "" {
+		p.secret = "[redacted]"
+	}
+	fmt.Fprintf(s, fmt.FormatString(s, verb), p)
+}
 
 func (c Credential) AWSStatic() (keyID, secretKey, sessionToken string, ok bool) {
 	parts := strings.Split(c.secret, "\x00")
