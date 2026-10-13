@@ -635,3 +635,27 @@ func TestGitLabSelfRejectedButUserAccepted(t *testing.T) {
 		t.Fatalf("missing active field read as inactive: %+v", f)
 	}
 }
+
+func TestGitLabAdminReadAndMinorScopes(t *testing.T) {
+	tok := "glpat-" + strings.Repeat("v", 20)
+	admin := func(scopes string) Options {
+		return server(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/user" {
+				fmt.Fprint(w, `{"username":"root","is_admin":true}`)
+				return
+			}
+			fmt.Fprint(w, `{"scopes":`+scopes+`,"user_id":1,"active":true}`)
+		})
+	}
+	if f := One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), admin(`["read_api"]`)); !hasWhat(f, "every private project on the GitLab instance") {
+		t.Fatalf("admin read_api: %+v", f)
+	}
+	o := gitlabServer(t, tok, `{"scopes":["read_user"],"user_id":7,"active":true}`)
+	if f := One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), o); !hasWhat(f, "private email") || hasWhat(f, "public data only") {
+		t.Fatalf("read_user: %+v", f)
+	}
+	o = gitlabServer(t, tok, `{"scopes":["ai_features"],"user_id":7,"active":true}`)
+	if f := One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), o); !hasWhat(f, "GitLab Duo") {
+		t.Fatalf("ai_features: %+v", f)
+	}
+}

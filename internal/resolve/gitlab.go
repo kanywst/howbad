@@ -102,7 +102,12 @@ func gitlabScopes(f *finding.Finding, who, host string, list []string, admin boo
 		f.Add(finding.Critical, "push code to every GitLab project "+who+" can write to")
 	}
 	if !scopes["api"] && (scopes["read_api"] || scopes["read_repository"]) {
-		f.Add(finding.High, "read every private GitLab project "+who+" can see")
+		if admin {
+			// Without Admin Mode an administrator reads every project.
+			f.Add(finding.High, "read every private project on the GitLab instance "+host+" (administrator)")
+		} else {
+			f.Add(finding.High, "read every private GitLab project "+who+" can see")
+		}
 	}
 	if !scopes["api"] && scopes["write_registry"] {
 		f.Add(finding.High, "push container images to GitLab registries "+who+" can write to")
@@ -121,6 +126,15 @@ func gitlabScopes(f *finding.Finding, who, host string, list []string, admin boo
 	}
 	if scopes["self_rotate"] {
 		f.Add(finding.Medium, "rotate this token to outlive its expiry")
+	}
+	if scopes["ai_features"] {
+		f.Add(finding.Low, "use GitLab Duo as "+who+" (code and chat on "+who+"'s AI seat)")
+	}
+	if scopes["read_service_ping"] && admin {
+		f.Add(finding.Low, "download "+host+"'s Service Ping usage data")
+	}
+	if scopes["read_user"] && len(f.Reach) == 0 {
+		f.Add(finding.Low, "read "+who+"'s profile, including private email, and list users on "+host)
 	}
 	var rest []string
 	for s := range scopes {
