@@ -245,6 +245,9 @@ func envBlockCreds(agent, via, src string, env map[string]string) []cred.Credent
 		if kind == cred.GitHub {
 			c.Ref = githubHostRef(k, env["GITHUB_HOST"], env["GH_HOST"], env["GITHUB_API_URL"])
 		}
+		if kind == cred.GitLab {
+			c.Ref = gitlabHostRef(env)
+		}
 		out = append(out, c)
 	}
 	if id, sec := env["AWS_ACCESS_KEY_ID"], env["AWS_SECRET_ACCESS_KEY"]; id != "" && sec != "" && !cred.IsPlaceholder(id) {
@@ -274,6 +277,27 @@ func githubHostRef(name string, hosts ...string) map[string]string {
 	}
 	if enterpriseName(name) {
 		return map[string]string{"host": "unknown-enterprise"}
+	}
+	return nil
+}
+
+// gitlabHostRef keeps self-managed tokens from being sent to gitlab.com.
+// The variables are the ones glab, the GitLab MCP servers and CI read.
+func gitlabHostRef(env map[string]string) map[string]string {
+	for _, k := range []string{"GITLAB_API_URL", "GITLAB_URL", "GITLAB_HOST", "CI_SERVER_URL"} {
+		v := strings.TrimSpace(env[k])
+		if v == "" {
+			continue
+		}
+		h := normalizeHost(v)
+		if h == "" && !strings.Contains(v, "://") {
+			h = normalizeHost("https://" + v)
+		}
+		if h == "" {
+			// Set but unreadable: never fall back to gitlab.com.
+			h = "unknown-self-managed"
+		}
+		return map[string]string{"host": h}
 	}
 	return nil
 }

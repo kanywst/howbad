@@ -469,3 +469,51 @@ func TestNormalizeHostRejectsTricks(t *testing.T) {
 func fakeUUID() string {
 	return strings.Join([]string{"aaaaaaaa", "bbbb", "cccc", "dddd", "eeeeeeeeeeee"}, "-")
 }
+
+func TestGitLabHost(t *testing.T) {
+	tok := "glpat-" + strings.Repeat("l", 20)
+	cs := Run(context.Background(), Env{Home: t.TempDir(), Vars: map[string]string{"GITLAB_TOKEN": tok}}).Credentials
+	if len(cs) != 1 || cs[0].Kind != cred.GitLab || cs[0].Ref["host"] != "" {
+		t.Fatalf("gitlab.com token: %+v", cs)
+	}
+	cs = Run(context.Background(), Env{Home: t.TempDir(), Vars: map[string]string{"GITLAB_TOKEN": tok, "GITLAB_HOST": "gitlab.corp.example"}}).Credentials
+	if cs[0].Ref["host"] != "gitlab.corp.example" {
+		t.Fatalf("GITLAB_HOST ignored: %+v", cs[0].Ref)
+	}
+	home := t.TempDir()
+	write(t, filepath.Join(home, ".cursor", "mcp.json"), `{"mcpServers":{"gl":{"env":{"GITLAB_PERSONAL_ACCESS_TOKEN":"`+tok+`","GITLAB_API_URL":"https://gitlab.corp.example/api/v4"}}}}`)
+	cs = Run(context.Background(), Env{Home: home, Vars: map[string]string{}}).Credentials
+	if len(cs) != 1 || cs[0].Ref["host"] != "gitlab.corp.example" {
+		t.Fatalf("MCP GITLAB_API_URL ignored: %+v", cs)
+	}
+}
+
+func TestGitLabSchemelessHost(t *testing.T) {
+	for v, want := range map[string]string{
+		"gitlab.corp.example/api/v4":      "gitlab.corp.example",
+		"gitlab.corp.example:8443/api/v4": "gitlab.corp.example:8443",
+		"https:///no-host":                "unknown-self-managed",
+	} {
+		if r := gitlabHostRef(map[string]string{"GITLAB_API_URL": v}); r["host"] != want {
+			t.Errorf("%q: got %q, want %q", v, r["host"], want)
+		}
+	}
+}
+
+func TestRepoLocalGitLabHostDoesNotMergeOntoEnvToken(t *testing.T) {
+	tok := "glpat-" + strings.Repeat("m", 20)
+	home, cwd := t.TempDir(), t.TempDir()
+	write(t, filepath.Join(cwd, ".mcp.json"), `{"mcpServers":{"gl":{"env":{"GITLAB_TOKEN":"`+tok+`","GITLAB_API_URL":"https://evil.example/api/v4"}}}}`)
+	cs := Run(context.Background(), Env{Home: home, Cwd: cwd, Vars: map[string]string{"GITLAB_TOKEN": tok}}).Credentials
+	for _, c := range cs {
+		if c.Ref["host"] == "evil.example" && !c.RepoLocal {
+			t.Fatalf("repo-local host merged onto the env token: %+v", c)
+		}
+		if c.Ref["host"] == "" && c.RepoLocal {
+			t.Fatalf("env token marked repo-local: %+v", c)
+		}
+	}
+	if len(cs) != 2 {
+		t.Fatalf("want the env and repo-local tokens kept apart, got %d: %+v", len(cs), cs)
+	}
+}

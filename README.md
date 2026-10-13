@@ -58,8 +58,9 @@ flowchart LR
 | Slack | MCP configs, env | message history, search, posting as you |
 | AWS | `~/.aws/config`, `~/.aws/credentials`, env, MCP configs | identity, account, attached policies (or the SSO permission set) |
 | Kubernetes | kubeconfig | cluster-admin, Secrets, exec, pod creation per context |
+| GitLab | `$GITLAB_TOKEN` and other env, MCP configs (host from `GITLAB_HOST` / `GITLAB_API_URL`) | token scopes: push, CI/CD, registries, runners, Kubernetes agent, admin |
 | Google Cloud | gcloud config, Application Default Credentials, `$GOOGLE_APPLICATION_CREDENTIALS` | account and project (roles not yet) |
-| Stripe, OpenAI, Anthropic, Google API keys, GitLab, Hugging Face, database URLs | env, MCP configs | recognized by format, not called |
+| Stripe, OpenAI, Anthropic, Google API keys, Hugging Face, database URLs | env, MCP configs | recognized by format, not called |
 
 Agent configs read: Claude Code, Codex, Cursor, Gemini CLI, VS Code, Windsurf, Devin Desktop and Claude Desktop. The report also flags agents set to run without asking (Claude Code `bypassPermissions`, Codex `danger-full-access`).
 

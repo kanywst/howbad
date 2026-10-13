@@ -23,6 +23,7 @@ type Options struct {
 	GitHubAPI   string
 	NPMRegistry string
 	SlackAPI    string
+	GitLabAPI   string
 }
 
 func (o *Options) defaults() {
@@ -41,6 +42,9 @@ func (o *Options) defaults() {
 	if o.SlackAPI == "" {
 		o.SlackAPI = "https://slack.com/api"
 	}
+	if o.GitLabAPI == "" {
+		o.GitLabAPI = "https://gitlab.com/api/v4"
+	}
 }
 
 type resolver func(ctx context.Context, c cred.Credential, o Options) finding.Finding
@@ -51,6 +55,7 @@ var resolvers = map[cred.Kind]resolver{
 	cred.Slack:  slack,
 	cred.AWS:    aws,
 	cred.Kube:   kube,
+	cred.GitLab: gitlab,
 }
 
 func All(ctx context.Context, creds []cred.Credential, o Options) []finding.Finding {
@@ -103,6 +108,7 @@ var offlineGuess = map[cred.Kind]string{
 	cred.NPM:    "use an npm token as its owner",
 	cred.Slack:  "use a Slack token as its owner",
 	cred.Kube:   "use a Kubernetes context",
+	cred.GitLab: "use a GitLab token as its owner",
 }
 
 func unverified(c cred.Credential) finding.Finding {
@@ -116,8 +122,6 @@ func unverified(c cred.Credential) finding.Finding {
 			what = "connect to database " + h + " with a password"
 		}
 		f.Add(finding.High, what)
-	case cred.GitLab:
-		f.Add(finding.High, "use the GitLab API as you (scopes not checked yet)")
 	case cred.GCP:
 		what := "use Google Cloud as " + c.Ref["account"]
 		if p := c.Ref["project"]; p != "" {

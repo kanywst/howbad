@@ -21,6 +21,7 @@ var (
 	ghTok    = "ghp_" + strings.Repeat("t", 36)
 	dbURL    = "postgres://app:hunter2hunter2@db.prod.internal:5432/app"
 	stripeSK = "sk_live_" + strings.Repeat("q", 24)
+	glTok    = "glpat-" + strings.Repeat("k", 20)
 )
 
 func setup(t *testing.T) (discover.Env, resolve.Options) {
@@ -39,6 +40,8 @@ func setup(t *testing.T) (discover.Env, resolve.Options) {
 		case "/user":
 			w.Header().Set("X-OAuth-Scopes", "repo")
 			fmt.Fprint(w, `{"login":"me"}`)
+		case "/personal_access_tokens/self":
+			fmt.Fprint(w, `{"scopes":["api"],"user_id":9,"active":true}`)
 		case "/user/repos":
 			fmt.Fprint(w, `[{"full_name":"me/app","stargazers_count":3,"permissions":{"push":true}}]`)
 		default:
@@ -46,8 +49,8 @@ func setup(t *testing.T) (discover.Env, resolve.Options) {
 		}
 	}))
 	t.Cleanup(s.Close)
-	env := discover.Env{Home: home, Cwd: home, GOOS: "linux", Vars: map[string]string{"STRIPE_SECRET_KEY": stripeSK}}
-	return env, resolve.Options{HTTP: s.Client(), GitHubAPI: s.URL}
+	env := discover.Env{Home: home, Cwd: home, GOOS: "linux", Vars: map[string]string{"STRIPE_SECRET_KEY": stripeSK, "GITLAB_TOKEN": glTok}}
+	return env, resolve.Options{HTTP: s.Client(), GitHubAPI: s.URL, GitLabAPI: s.URL}
 }
 
 func execute(t *testing.T, env discover.Env, o resolve.Options, args ...string) (string, error) {
@@ -63,7 +66,7 @@ func execute(t *testing.T, env discover.Env, o resolve.Options, args ...string) 
 
 func assertNoSecrets(t *testing.T, out string) {
 	t.Helper()
-	for _, s := range []string{ghTok, dbURL, "hunter2hunter2", stripeSK} {
+	for _, s := range []string{ghTok, dbURL, "hunter2hunter2", stripeSK, glTok} {
 		if strings.Contains(out, s) {
 			t.Fatalf("secret %q leaked into output:\n%s", s, out)
 		}
@@ -82,6 +85,7 @@ func TestTextReport(t *testing.T) {
 		"e.g. me/app (3★)",
 		`MCP server "gh" (Cursor) · me on github.com · ~/.cursor/mcp.json`,
 		"move money on a live Stripe account",
+		"edit CI/CD pipelines and variables",
 		"connect to database db.prod.internal",
 		"agents running as you: Cursor",
 		"pasted straight into agent configs: 2 credentials",
@@ -116,7 +120,7 @@ func TestJSONReport(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &doc); err != nil {
 		t.Fatalf("invalid JSON: %v\n%s", err, out)
 	}
-	if doc.Highest != "critical" || len(doc.Findings) != 3 {
+	if doc.Highest != "critical" || len(doc.Findings) != 4 {
 		t.Fatalf("unexpected document: %+v", doc)
 	}
 }
