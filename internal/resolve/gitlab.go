@@ -91,6 +91,10 @@ func gitlabScopes(f *finding.Finding, who, host string, list []string, admin, kn
 	for _, s := range list {
 		scopes[s] = true
 	}
+	// Only administrators can hold these scopes, whether or not /user said so.
+	if scopes["admin_mode"] || scopes["read_service_ping"] {
+		admin, known = true, true
+	}
 	// Without Admin Mode, an admin's api token is already an admin token.
 	if admin && (scopes["api"] || scopes["sudo"] || scopes["admin_mode"]) {
 		f.Add(finding.Critical, "administer the GitLab instance "+host+" and act as any user")
@@ -134,7 +138,6 @@ func gitlabScopes(f *finding.Finding, who, host string, list []string, admin, kn
 	if scopes["ai_features"] {
 		f.Add(finding.Low, "use GitLab Duo as "+who+" (code and chat on "+who+"'s AI seat)")
 	}
-	// Only administrators can hold this scope, so no /user check is needed.
 	if scopes["read_service_ping"] {
 		f.Add(finding.Low, "download "+host+"'s Service Ping usage data")
 	}

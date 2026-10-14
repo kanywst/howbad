@@ -674,3 +674,18 @@ func TestGitLabUnreadableUserKeepsAdminReadPossible(t *testing.T) {
 		t.Fatalf("admin read must stay possible when /user is unreadable: %+v", f)
 	}
 }
+
+func TestGitLabAdminOnlyScopeImpliesAdmin(t *testing.T) {
+	tok := "glpat-" + strings.Repeat("z", 20)
+	o := server(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/user" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		fmt.Fprint(w, `{"scopes":["admin_mode"],"user_id":1,"active":true}`)
+	})
+	f := One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), o)
+	if f.Severity() != finding.Critical || !hasWhat(f, "administer the GitLab instance") {
+		t.Fatalf("admin_mode alone must report admin reach: %+v", f)
+	}
+}
