@@ -70,8 +70,9 @@ func gitlab(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 		IsAdmin  bool   `json:"is_admin"`
 	}
 	who := fmt.Sprintf("user #%d", tok.UserID)
+	known := false
 	if _, st, err := getJSON(ctx, o.HTTP, base+"/user", auth, &user); err == nil && st/100 == 2 && user.Username != "" {
-		who = user.Username
+		who, known = user.Username, true
 	}
 	f.Status, f.Identity = finding.OK, who+" on "+host
 
@@ -80,47 +81,78 @@ func gitlab(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 		f.Reach = append(f.Reach, finding.Capability{Severity: finding.Critical, What: "push code to every GitLab project " + who + " can write to (fine-grained or unlisted permissions, not read back)", Inferred: true})
 		return f
 	}
-	gitlabScopes(&f, who, host, tok.Scopes, user.IsAdmin)
+	gitlabScopes(&f, who, host, tok.Scopes, user.IsAdmin, known)
 	return f
 }
 
-func gitlabScopes(f *finding.Finding, who, host string, list []string, admin bool) {
+// known is false when /user could not be read, so admin is unknown.
+func gitlabScopes(f *finding.Finding, who, host string, list []string, admin, known bool) {
 	scopes := map[string]bool{}
 	for _, s := range list {
 		scopes[s] = true
 	}
-	// Without Admin Mode, an admin's api token is already an admin token.
-	if admin && (scopes["api"] || scopes["sudo"] || scopes["admin_mode"]) {
+	// Only administrators can hold these scopes, whether or not /user said so.
+	if scopes["admin_mode"] || scopes["read_service_ping"] {
+		admin, known = true, true
+	}
+	// Without Admin Mode (the self-managed default) an administrator's token
+	// reaches every project, and an api token is an admin token. When /user
+	// was unreadable, admin is unknown: report that possibility as Inferred.
+	add := func(sev finding.Severity, what string) {
+		f.Reach = append(f.Reach, finding.Capability{Severity: sev, What: what, Inferred: !known})
+	}
+	projects := "every GitLab project " + who + " can write to"
+	readable := "every private GitLab project " + who + " can see"
+	switch {
+	case admin:
+		projects = "every project on the GitLab instance " + host + " (administrator)"
+		readable = projects
+	case !known:
+		projects += " (every project on " + host + " if an administrator)"
+		readable += " (every project on " + host + " if an administrator)"
+	}
+	adminScope := scopes["api"] || scopes["sudo"] || scopes["admin_mode"]
+	switch {
+	case admin && adminScope:
 		f.Add(finding.Critical, "administer the GitLab instance "+host+" and act as any user")
-	} else if scopes["sudo"] {
-		f.Add(finding.Critical, "act as any user on "+host+" if "+who+" is an administrator")
+	case adminScope && (!known || scopes["sudo"]):
+		f.Reach = append(f.Reach, finding.Capability{Severity: finding.Critical, What: "administer " + host + " and act as any user if " + who + " is an administrator", Inferred: true})
 	}
 	switch {
 	case scopes["api"]:
-		f.Add(finding.Critical, "push code, edit CI/CD pipelines and variables, and publish packages in every GitLab project "+who+" can write to")
+		add(finding.Critical, "push code, edit CI/CD pipelines and variables, and publish packages in "+projects)
 	case scopes["write_repository"]:
-		f.Add(finding.Critical, "push code to every GitLab project "+who+" can write to")
+		add(finding.Critical, "push code to "+projects)
 	}
 	if !scopes["api"] && (scopes["read_api"] || scopes["read_repository"]) {
-		f.Add(finding.High, "read every private GitLab project "+who+" can see")
+		add(finding.High, "read "+readable)
 	}
 	if !scopes["api"] && scopes["write_registry"] {
-		f.Add(finding.High, "push container images to GitLab registries "+who+" can write to")
+		add(finding.High, "push container images to the registries of "+projects)
 	}
 	if !scopes["api"] && (scopes["read_registry"] || scopes["read_virtual_registry"]) && !scopes["write_registry"] {
-		f.Add(finding.Medium, "pull private container images "+who+" can see")
+		add(finding.Medium, "pull private container images from "+readable)
 	}
 	if scopes["write_virtual_registry"] {
 		f.Add(finding.High, "push and delete container images through the GitLab dependency proxy")
 	}
 	if scopes["k8s_proxy"] {
-		f.Add(finding.High, "call Kubernetes clusters connected to GitLab through the agent for Kubernetes")
+		add(finding.High, "call Kubernetes clusters connected through the agent for Kubernetes in "+readable)
 	}
 	if scopes["create_runner"] || scopes["manage_runner"] {
-		f.Add(finding.High, "register or reconfigure GitLab CI runners (see CI job secrets)")
+		add(finding.High, "register or reconfigure CI runners (and see CI job secrets) in "+projects)
 	}
 	if scopes["self_rotate"] {
 		f.Add(finding.Medium, "rotate this token to outlive its expiry")
+	}
+	if scopes["ai_features"] {
+		f.Add(finding.Low, "use GitLab Duo as "+who+" (code and chat on "+who+"'s AI seat)")
+	}
+	if scopes["read_service_ping"] {
+		f.Add(finding.Low, "download "+host+"'s Service Ping usage data")
+	}
+	if scopes["read_user"] {
+		f.Add(finding.Low, "read "+who+"'s profile, including private email, and list users on "+host)
 	}
 	var rest []string
 	for s := range scopes {
