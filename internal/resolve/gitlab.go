@@ -128,19 +128,19 @@ func gitlabScopes(f *finding.Finding, who, host string, list []string, admin, kn
 		add(finding.High, "read "+readable)
 	}
 	if !scopes["api"] && scopes["write_registry"] {
-		f.Add(finding.High, "push container images to GitLab registries "+who+" can write to")
+		add(finding.High, "push container images to the registries of "+projects)
 	}
 	if !scopes["api"] && (scopes["read_registry"] || scopes["read_virtual_registry"]) && !scopes["write_registry"] {
-		f.Add(finding.Medium, "pull private container images "+who+" can see")
+		add(finding.Medium, "pull private container images from "+readable)
 	}
 	if scopes["write_virtual_registry"] {
 		f.Add(finding.High, "push and delete container images through the GitLab dependency proxy")
 	}
 	if scopes["k8s_proxy"] {
-		f.Add(finding.High, "call Kubernetes clusters connected to GitLab through the agent for Kubernetes")
+		add(finding.High, "call Kubernetes clusters connected through the agent for Kubernetes in "+readable)
 	}
 	if scopes["create_runner"] || scopes["manage_runner"] {
-		f.Add(finding.High, "register or reconfigure GitLab CI runners (see CI job secrets)")
+		add(finding.High, "register or reconfigure CI runners (and see CI job secrets) in "+projects)
 	}
 	if scopes["self_rotate"] {
 		f.Add(finding.Medium, "rotate this token to outlive its expiry")
