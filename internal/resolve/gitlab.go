@@ -95,27 +95,37 @@ func gitlabScopes(f *finding.Finding, who, host string, list []string, admin, kn
 	if scopes["admin_mode"] || scopes["read_service_ping"] {
 		admin, known = true, true
 	}
-	// Without Admin Mode, an admin's api token is already an admin token.
-	if admin && (scopes["api"] || scopes["sudo"] || scopes["admin_mode"]) {
+	// Without Admin Mode (the self-managed default) an administrator's token
+	// reaches every project, and an api token is an admin token. When /user
+	// was unreadable, admin is unknown: report that possibility as Inferred.
+	add := func(sev finding.Severity, what string) {
+		f.Reach = append(f.Reach, finding.Capability{Severity: sev, What: what, Inferred: !known})
+	}
+	projects := "every GitLab project " + who + " can write to"
+	readable := "every private GitLab project " + who + " can see"
+	switch {
+	case admin:
+		projects = "every project on the GitLab instance " + host + " (administrator)"
+		readable = projects
+	case !known:
+		projects += " (every project on " + host + " if an administrator)"
+		readable += " (every project on " + host + " if an administrator)"
+	}
+	adminScope := scopes["api"] || scopes["sudo"] || scopes["admin_mode"]
+	switch {
+	case admin && adminScope:
 		f.Add(finding.Critical, "administer the GitLab instance "+host+" and act as any user")
-	} else if scopes["sudo"] {
-		f.Add(finding.Critical, "act as any user on "+host+" if "+who+" is an administrator")
+	case adminScope && (!known || scopes["sudo"]):
+		f.Reach = append(f.Reach, finding.Capability{Severity: finding.Critical, What: "administer " + host + " and act as any user if " + who + " is an administrator", Inferred: true})
 	}
 	switch {
 	case scopes["api"]:
-		f.Add(finding.Critical, "push code, edit CI/CD pipelines and variables, and publish packages in every GitLab project "+who+" can write to")
+		add(finding.Critical, "push code, edit CI/CD pipelines and variables, and publish packages in "+projects)
 	case scopes["write_repository"]:
-		f.Add(finding.Critical, "push code to every GitLab project "+who+" can write to")
+		add(finding.Critical, "push code to "+projects)
 	}
 	if !scopes["api"] && (scopes["read_api"] || scopes["read_repository"]) {
-		if admin {
-			// Without Admin Mode an administrator reads every project.
-			f.Add(finding.High, "read every private project on the GitLab instance "+host+" (administrator)")
-		} else if !known {
-			f.Reach = append(f.Reach, finding.Capability{Severity: finding.High, What: "read every private GitLab project " + who + " can see (every project on " + host + " if an administrator)", Inferred: true})
-		} else {
-			f.Add(finding.High, "read every private GitLab project "+who+" can see")
-		}
+		add(finding.High, "read "+readable)
 	}
 	if !scopes["api"] && scopes["write_registry"] {
 		f.Add(finding.High, "push container images to GitLab registries "+who+" can write to")

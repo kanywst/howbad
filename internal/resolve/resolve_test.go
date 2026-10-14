@@ -647,8 +647,11 @@ func TestGitLabAdminReadAndMinorScopes(t *testing.T) {
 			fmt.Fprint(w, `{"scopes":`+scopes+`,"user_id":1,"active":true}`)
 		})
 	}
-	if f := One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), admin(`["read_api"]`)); !hasWhat(f, "every private project on the GitLab instance") {
+	if f := One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), admin(`["read_api"]`)); !hasWhat(f, "read every project on the GitLab instance") {
 		t.Fatalf("admin read_api: %+v", f)
+	}
+	if f := One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), admin(`["write_repository"]`)); !hasWhat(f, "push code to every project on the GitLab instance") {
+		t.Fatalf("admin write_repository: %+v", f)
 	}
 	o := gitlabServer(t, tok, `{"scopes":["read_user"],"user_id":7,"active":true}`)
 	if f := One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), o); !hasWhat(f, "private email") || hasWhat(f, "public data only") {
@@ -672,6 +675,16 @@ func TestGitLabUnreadableUserKeepsAdminReadPossible(t *testing.T) {
 	f := One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), o)
 	if !hasWhat(f, "if an administrator") || !f.Reach[0].Inferred {
 		t.Fatalf("admin read must stay possible when /user is unreadable: %+v", f)
+	}
+	o = server(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/user" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		fmt.Fprint(w, `{"scopes":["api"],"user_id":3,"active":true}`)
+	})
+	if f = One(context.Background(), cred.New(cred.GitLab, "x", "y", tok), o); !hasWhat(f, "administer") {
+		t.Fatalf("api with unknown admin must keep the admin upper bound: %+v", f)
 	}
 }
 
