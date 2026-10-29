@@ -97,7 +97,7 @@ and secrets are never printed.`,
 	}
 	f := cmd.Flags()
 	f.BoolVar(&fl.offline, "offline", false, "find credentials but make no network calls")
-	f.BoolVar(&fl.noExec, "no-exec", false, "do not run credential helpers (gh auth token, credential_process, kubeconfig exec plugins)")
+	f.BoolVar(&fl.noExec, "no-exec", false, "do not run credential helpers (gh auth token, gcloud auth print-access-token, credential_process, kubeconfig exec plugins)")
 	f.BoolVar(&fl.json, "json", false, "print JSON instead of the report")
 	f.BoolVarP(&fl.verbose, "verbose", "v", false, "show low-severity reach and every credential that could not be checked")
 	f.StringVar(&fl.failOn, "fail-on", "", "exit 2 if anything reachable is at or above this severity (info|low|medium|high|critical)")

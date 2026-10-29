@@ -3,6 +3,7 @@ package discover
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -59,12 +60,7 @@ func fromEnv(env Env) []cred.Credential {
 		out = append(out, c)
 	}
 	if p := env.Vars["GOOGLE_APPLICATION_CREDENTIALS"]; p != "" && exists(p) {
-		out = append(out, cred.Credential{
-			Kind:    cred.GCP,
-			Via:     "$GOOGLE_APPLICATION_CREDENTIALS",
-			Sources: []string{env.tilde(p)},
-			Ref:     map[string]string{"keyfile": "true"},
-		})
+		out = append(out, googleFile("$GOOGLE_APPLICATION_CREDENTIALS", env.tilde(p), p, "keyfile"))
 	}
 	if id, sec := env.Vars["AWS_ACCESS_KEY_ID"], env.Vars["AWS_SECRET_ACCESS_KEY"]; id != "" && sec != "" {
 		out = append(out, cred.NewAWSStatic("$AWS_ACCESS_KEY_ID", "environment variables", id, sec, env.Vars["AWS_SESSION_TOKEN"]))
@@ -359,7 +355,22 @@ func fromKube(env Env) []cred.Credential {
 	return out
 }
 
-func fromGCP(env Env) []cred.Credential {
+// googleFile keeps the whole JSON as the secret so the resolver never
+// re-reads a path a repo could have swapped in the meantime.
+func googleFile(via, src, path, refKey string) cred.Credential {
+	data, err := readConfig(path)
+	var doc struct {
+		Type string `json:"type"`
+	}
+	if err != nil || json.Unmarshal(data, &doc) != nil {
+		return cred.Credential{Kind: cred.GCP, Via: via, Sources: []string{src}, Ref: map[string]string{refKey: "true"}}
+	}
+	c := cred.New(cred.GCP, via, src, string(data))
+	c.Ref = map[string]string{refKey: "true", "type": doc.Type}
+	return c
+}
+
+func fromGCP(ctx context.Context, env Env) []cred.Credential {
 	dir := env.Vars["CLOUDSDK_CONFIG"]
 	if dir == "" {
 		dir = filepath.Join(env.Home, ".config", "gcloud")
@@ -372,22 +383,21 @@ func fromGCP(env Env) []cred.Credential {
 	cfgPath := filepath.Join(dir, "configurations", "config_"+active)
 	if ini, _ := parseINI(cfgPath); ini != nil {
 		if acct := ini["core"]["account"]; acct != "" {
-			out = append(out, cred.Credential{
-				Kind:    cred.GCP,
-				Via:     "gcloud " + acct,
-				Sources: []string{env.tilde(cfgPath)},
-				Ref:     map[string]string{"account": acct, "project": ini["core"]["project"]},
-			})
+			c := cred.Credential{Kind: cred.GCP, Sources: []string{env.tilde(cfgPath)}}
+			// gcloud keeps its tokens in a SQLite cache; ask gcloud instead.
+			if env.Exec != nil {
+				if s, err := env.Exec(ctx, "gcloud", "auth", "print-access-token", acct, "--quiet", "--verbosity=none"); err == nil && strings.TrimSpace(s) != "" {
+					c = cred.New(cred.GCP, "", env.tilde(cfgPath), strings.TrimSpace(s))
+				}
+			}
+			c.Via = "gcloud " + acct
+			c.Ref = map[string]string{"account": acct, "project": ini["core"]["project"]}
+			out = append(out, c)
 		}
 	}
 	adc := filepath.Join(dir, "application_default_credentials.json")
 	if exists(adc) {
-		out = append(out, cred.Credential{
-			Kind:    cred.GCP,
-			Via:     "Google Application Default Credentials",
-			Sources: []string{env.tilde(adc)},
-			Ref:     map[string]string{"adc": "true"},
-		})
+		out = append(out, googleFile("Google Application Default Credentials", env.tilde(adc), adc, "adc"))
 	}
 	return out
 }

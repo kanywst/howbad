@@ -59,7 +59,7 @@ flowchart LR
 | AWS | `~/.aws/config`, `~/.aws/credentials`, env, MCP configs | identity, account, attached policies (or the SSO permission set) |
 | Kubernetes | kubeconfig | cluster-admin, Secrets, exec, pod creation per context |
 | GitLab | `$GITLAB_TOKEN` and other env, MCP configs (host from `GITLAB_HOST` / `GITLAB_API_URL`) | token scopes: push, CI/CD, registries, runners, Kubernetes agent, admin |
-| Google Cloud | gcloud config, Application Default Credentials, `$GOOGLE_APPLICATION_CREDENTIALS` | account and project (roles not yet) |
+| Google Cloud | gcloud config, Application Default Credentials, `$GOOGLE_APPLICATION_CREDENTIALS` | per project: IAM admin, service account impersonation, Secret Manager, GKE credentials, running code, reading or deleting data |
 | Stripe, OpenAI, Anthropic, Google API keys, Hugging Face, database URLs | env, MCP configs | recognized by format, not called |
 
 Agent configs read: Claude Code, Codex, Cursor, Gemini CLI, Antigravity, VS Code, GitHub Copilot, Cline, Windsurf, Devin Desktop and Claude Desktop. The report also flags agents set to run without asking (Claude Code `bypassPermissions`, Codex `danger-full-access`).
@@ -71,7 +71,7 @@ Agent configs read: Claude Code, Codex, Cursor, Gemini CLI, Antigravity, VS Code
 - Secrets are never printed. Output shows a short SHA-256 fingerprint so you can tell two tokens apart.
 - Nothing is sent anywhere except the provider that issued each credential. There is no telemetry.
 - Every call is read-only. The only writes are Kubernetes self-review objects, which store nothing.
-- `--offline` makes no network calls at all. `--no-exec` skips anything that would run a helper (`gh auth token`, AWS `credential_process`, kubeconfig exec plugins).
+- `--offline` makes no network calls at all. `--no-exec` skips anything that would run a helper (`gh auth token`, `gcloud auth print-access-token`, AWS `credential_process`, kubeconfig exec plugins).
 
 Read [SECURITY.md](SECURITY.md) for the details and how to report a problem.
 
@@ -79,6 +79,7 @@ Read [SECURITY.md](SECURITY.md) for the details and how to report a problem.
 
 - Fine-grained GitHub tokens, GitHub App tokens and npm tokens cannot report their own permissions. For those, `howbad` shows the account's access as an upper bound and marks it `inferred`. npm publishing also needs 2FA unless the token was created to bypass it, which the registry does not expose.
 - AWS permissions come from attached policy names. Custom policies are not evaluated, and a role that cannot read its own policies falls back to its name.
+- Google Cloud permissions come from `testIamPermissions` on each project the credential can list (up to 25), so roles inherited from folders, the organization or groups count. Workload identity federation (`external_account`) and impersonation configs are not exchanged and show as an inferred upper bound.
 - Remote MCP servers that use OAuth keep their tokens in the agent's own store (often the OS keychain), which `howbad` does not read.
 - Configs inside the current directory (`.mcp.json`, `.npmrc`, `.vscode/mcp.json`, ...) are read, but a cloned repo cannot steer howbad: `${VAR}` in a repo's `.npmrc` is not expanded, and a token whose host also comes from a repo config is not sent anywhere.
 

@@ -39,7 +39,7 @@ func Run(ctx context.Context, env Env) Result {
 	all = append(all, fromNPM(env)...)
 	all = append(all, fromAWS(env)...)
 	all = append(all, fromKube(env)...)
-	all = append(all, fromGCP(env)...)
+	all = append(all, fromGCP(ctx, env)...)
 	agentCreds, agents := fromAgents(env)
 	all = append(all, agentCreds...)
 	return Result{Credentials: cred.Merge(all), Agents: agents}
