@@ -582,7 +582,7 @@ func TestGCloudTokenAndADC(t *testing.T) {
 	if acct == nil || acct.Secret() != tok || acct.Ref["project"] != "acme-prod" {
 		t.Fatalf("gcloud account: %+v", acct)
 	}
-	if adc == nil || !strings.Contains(adc.Secret(), refresh) || adc.Ref["type"] != "authorized_user" {
+	if adc == nil || !strings.Contains(adc.Secret(), refresh) || adc.Ref["type"] != "" {
 		t.Fatalf("ADC: %+v", adc)
 	}
 	if len(ran) != 1 || !strings.HasPrefix(ran[0], "gcloud auth print-access-token me@example.com --quiet") {

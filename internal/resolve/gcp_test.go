@@ -113,7 +113,7 @@ func TestGCPAuthorizedUserIgnoresTokenURI(t *testing.T) {
 	})
 	adc := fmt.Sprintf(`{"type":"authorized_user","client_id":"c","client_secret":"s","refresh_token":%q,"token_uri":%q}`, refresh, planted.URL+"/token")
 	c := cred.New(cred.GCP, "Google Application Default Credentials", "~/.config/gcloud/application_default_credentials.json", adc)
-	c.Ref = map[string]string{"adc": "true", "type": "authorized_user"}
+	c.Ref = map[string]string{"adc": "true"}
 	f := One(context.Background(), c, o)
 	if f.Status != finding.OK || f.Identity != "me@example.com" || !hasWhat(f, "read data (Cloud Storage, BigQuery, Cloud SQL) in 1 Google Cloud project") {
 		t.Fatalf("%s %q %q %+v", f.Status, f.Identity, f.Detail, f.Reach)
@@ -153,7 +153,7 @@ func TestGCPServiceAccountKey(t *testing.T) {
 	})
 	sa, _ := json.Marshal(map[string]string{"type": "service_account", "client_email": "ci@ci-proj.iam.gserviceaccount.com", "private_key": pemKey, "project_id": "ci-proj"})
 	c := cred.New(cred.GCP, "$GOOGLE_APPLICATION_CREDENTIALS", "~/sa.json", string(sa))
-	c.Ref = map[string]string{"keyfile": "true", "type": "service_account"}
+	c.Ref = map[string]string{"keyfile": "true"}
 	f := One(context.Background(), c, o)
 	if f.Status != finding.OK || f.Identity != "ci@ci-proj.iam.gserviceaccount.com" || f.Severity() != finding.Critical ||
 		!hasWhat(f, "act as service accounts (mint keys or tokens) in 1 Google Cloud project") || !hasWhat(f, "run code and spend money") {

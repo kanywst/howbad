@@ -359,14 +359,11 @@ func fromKube(env Env) []cred.Credential {
 // re-reads a path a repo could have swapped in the meantime.
 func googleFile(via, src, path, refKey string) cred.Credential {
 	data, err := readConfig(path)
-	var doc struct {
-		Type string `json:"type"`
-	}
-	if err != nil || json.Unmarshal(data, &doc) != nil {
+	if err != nil || !json.Valid(data) {
 		return cred.Credential{Kind: cred.GCP, Via: via, Sources: []string{src}, Ref: map[string]string{refKey: "true"}}
 	}
 	c := cred.New(cred.GCP, via, src, string(data))
-	c.Ref = map[string]string{refKey: "true", "type": doc.Type}
+	c.Ref = map[string]string{refKey: "true"}
 	return c
 }
 
