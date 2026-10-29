@@ -62,7 +62,7 @@ flowchart LR
 | Google Cloud | gcloud config, Application Default Credentials, `$GOOGLE_APPLICATION_CREDENTIALS` | per project: IAM admin, service account impersonation, Secret Manager, GKE credentials, running code, reading or deleting data |
 | Stripe, OpenAI, Anthropic, Google API keys, Hugging Face, database URLs | env, MCP configs | recognized by format, not called |
 
-Agent configs read: Claude Code, Codex, Cursor, Gemini CLI, Antigravity, VS Code, GitHub Copilot, Cline, Windsurf, Devin Desktop and Claude Desktop. The report also flags agents set to run without asking (Claude Code `bypassPermissions` in user or managed settings, cleared by a managed `disableBypassPermissionsMode` and only annotated by a user-level one, which the agent could edit back; Codex `danger-full-access`). Claude Code managed settings and `managed-mcp.json` are read too.
+Agent configs read: Claude Code, Codex, Cursor, Gemini CLI, Antigravity, VS Code, GitHub Copilot, Cline, Continue, Windsurf, Devin Desktop and Claude Desktop. The report also flags agents set to run without asking (Claude Code `bypassPermissions` in user or managed settings, cleared by a managed `disableBypassPermissionsMode` and only annotated by a user-level one, which the agent could edit back; Codex `danger-full-access`). Claude Code managed settings and `managed-mcp.json` are read too.
 
 ## Safety
 

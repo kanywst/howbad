@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"gopkg.in/yaml.v3"
 
 	"github.com/kanywst/howbad/internal/cred"
 )
@@ -18,6 +19,7 @@ type agentFile struct {
 	agent   string
 	path    string
 	toml    bool
+	yaml    bool
 	project bool
 	// settings: a Claude Code settings file, whose env block the agent gets.
 	settings bool
@@ -64,6 +66,8 @@ func agentFiles(env Env) []agentFile {
 		{agent: "Antigravity", path: filepath.Join(h, ".gemini", "antigravity", "mcp_config.json")},
 		{agent: "Cline", path: clineSettings(env)},
 		{agent: "Codex", path: filepath.Join(codexHome(env), "config.toml"), toml: true},
+		{agent: "Continue", path: filepath.Join(h, ".continue", "config.yaml"), yaml: true},
+		{agent: "Continue", path: filepath.Join(h, ".continue", "config.json")},
 	}
 	if d := env.ClaudeManaged; d != "" {
 		files = append(files,
@@ -92,6 +96,24 @@ func agentFiles(env Env) []agentFile {
 			agentFile{agent: "Cursor", path: filepath.Join(c, ".cursor", "mcp.json"), project: true},
 			agentFile{agent: "VS Code", path: filepath.Join(c, ".vscode", "mcp.json"), project: true},
 			agentFile{agent: "Gemini CLI", path: filepath.Join(c, ".gemini", "settings.json"), project: true},
+		)
+		// Continue also accepts Claude, Cursor and Cline JSON in this folder.
+		// ReadDir, not Glob: a cwd with [ or * in it is not a pattern.
+		blockDir := filepath.Join(c, ".continue", "mcpServers")
+		blocks, _ := os.ReadDir(blockDir)
+		n := 0
+		for _, e := range blocks {
+			b := filepath.Join(blockDir, e.Name())
+			ext := filepath.Ext(b)
+			if ext != ".yaml" && ext != ".yml" && ext != ".json" {
+				continue
+			}
+			if n++; n > maxServersPerFile {
+				break
+			}
+			files = append(files, agentFile{agent: "Continue", path: b, yaml: ext != ".json", project: true})
+		}
+		files = append(files,
 			agentFile{agent: "Antigravity", path: filepath.Join(c, ".agents", "mcp_config.json"), project: true},
 			agentFile{agent: "Devin Desktop", path: filepath.Join(c, ".devin", "mcp_config.json"), project: true},
 			agentFile{agent: "Devin Desktop", path: filepath.Join(c, ".devin", "mcp_config.local.json"), project: true},
@@ -139,6 +161,10 @@ func fromAgents(env Env) ([]cred.Credential, []Agent) {
 			if _, err := toml.Decode(string(data), &doc); err != nil {
 				continue
 			}
+		} else if f.yaml {
+			if yaml.Unmarshal(data, &doc) != nil {
+				continue
+			}
 		} else if json.Unmarshal(data, &doc) != nil {
 			continue
 		}
@@ -169,6 +195,9 @@ func fromAgents(env Env) ([]cred.Credential, []Agent) {
 				break
 			}
 			found = append(found, serverCreds(f.agent, name, src, srv[name])...)
+		}
+		if f.agent == "Continue" {
+			found = append(found, modelKeyCreds(f.agent, src, doc)...)
 		}
 		if f.settings {
 			found = append(found, envBlockCreds(f.agent, "Claude Code settings env", src, stringMap(doc["env"]))...)
@@ -202,13 +231,69 @@ func fromAgents(env Env) ([]cred.Credential, []Agent) {
 
 func servers(doc map[string]any) map[string]map[string]any {
 	out := map[string]map[string]any{}
+	// Names can repeat across keys and list entries; never let one
+	// server's credentials overwrite another's.
+	put := func(name string, s map[string]any) {
+		key := name
+		for i := 2; out[key] != nil; i++ {
+			key = fmt.Sprintf("%s (%d)", name, i)
+		}
+		out[key] = s
+	}
 	for _, key := range []string{"mcpServers", "servers", "mcp_servers"} {
-		m, _ := doc[key].(map[string]any)
-		for name, s := range m {
-			if sm, ok := s.(map[string]any); ok {
-				out[name] = sm
+		switch m := doc[key].(type) {
+		case map[string]any:
+			for _, name := range sortedKeys(m) {
+				if sm, ok := m[name].(map[string]any); ok {
+					put(name, sm)
+				}
+			}
+		case []any:
+			// Continue's config.yaml lists servers with a name field.
+			for i, s := range m {
+				sm, ok := s.(map[string]any)
+				if !ok {
+					continue
+				}
+				name, _ := sm["name"].(string)
+				if name == "" {
+					name = fmt.Sprintf("#%d", i+1)
+				}
+				put(name, sm)
 			}
 		}
+	}
+	// Continue's legacy config.json nests them under experimental.
+	exp, _ := doc["experimental"].(map[string]any)
+	legacy, _ := exp["modelContextProtocolServers"].([]any)
+	for i, s := range legacy {
+		sm, _ := s.(map[string]any)
+		if t, ok := sm["transport"].(map[string]any); ok {
+			put(fmt.Sprintf("legacy #%d", i+1), t)
+		}
+	}
+	return out
+}
+
+// modelKeyCreds reads apiKey from Continue's models list, the provider keys
+// the agent itself runs on.
+func modelKeyCreds(agent, src string, doc map[string]any) []cred.Credential {
+	models, _ := doc["models"].([]any)
+	var out []cred.Credential
+	for i, m := range models {
+		mm, _ := m.(map[string]any)
+		key, _ := mm["apiKey"].(string)
+		name, _ := mm["name"].(string)
+		if name == "" {
+			name = fmt.Sprintf("#%d", i+1)
+		}
+		kind, secret, ok := cred.Classify("API_KEY", key)
+		if !ok {
+			continue
+		}
+		c := cred.New(kind, fmt.Sprintf("model %q (%s)", name, agent), src, secret)
+		c.HandedTo = []string{agent}
+		out = append(out, c)
 	}
 	return out
 }
@@ -268,8 +353,8 @@ func serverCreds(agent, server, src string, s map[string]any) []cred.Credential 
 		}
 	}
 	out = append(out, envBlockCreds(agent, via, src, stringMap(s["env"]))...)
-	for _, hk := range []string{"headers", "http_headers", "auth"} {
-		h := stringMap(s[hk])
+	ro, _ := s["requestOptions"].(map[string]any)
+	for _, h := range []map[string]string{stringMap(s["headers"]), stringMap(s["http_headers"]), stringMap(s["auth"]), stringMap(ro["headers"])} {
 		for _, k := range sortedKeys(h) {
 			add(k, h[k])
 		}
