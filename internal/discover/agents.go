@@ -69,14 +69,17 @@ func agentFiles(env Env) []agentFile {
 			agentFile{agent: "Claude Code", path: filepath.Join(d, "managed-mcp.json")},
 		)
 		// Drop-ins merge over managed-settings.json in name order.
+		// ReadDir returns what it read even on error, so use it either way.
 		dropins, _ := os.ReadDir(filepath.Join(d, "managed-settings.d"))
-		for i, e := range dropins {
-			if i == maxServersPerFile {
+		n := 0
+		for _, e := range dropins {
+			if filepath.Ext(e.Name()) != ".json" {
+				continue
+			}
+			if n++; n > maxServersPerFile {
 				break
 			}
-			if filepath.Ext(e.Name()) == ".json" {
-				files = append(files, agentFile{agent: "Claude Code", path: filepath.Join(d, "managed-settings.d", e.Name())})
-			}
+			files = append(files, agentFile{agent: "Claude Code", path: filepath.Join(d, "managed-settings.d", e.Name())})
 		}
 	}
 	if c != "" && c != h {
