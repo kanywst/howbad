@@ -639,7 +639,7 @@ func TestClaudeManagedSettings(t *testing.T) {
 	posture := func() string {
 		for _, a := range Run(context.Background(), env).Agents {
 			if a.Name == "Claude Code" {
-				return a.Posture
+				return strings.TrimSuffix(a.Posture+"; "+a.Note, "; ")
 			}
 		}
 		return "missing"
@@ -659,7 +659,7 @@ func TestClaudeManagedSettings(t *testing.T) {
 	// The agent can edit user settings back, so a user-level disable only
 	// annotates the warning; a managed one removes it.
 	write(t, filepath.Join(home, ".claude", "settings.json"), `{"permissions":{"disableBypassPermissionsMode":"disable"}}`)
-	if p := posture(); !strings.HasPrefix(p, "bypassPermissions, turned off only in user settings") {
+	if p := posture(); p != "bypassPermissions; turned off only in user settings the agent can edit" {
 		t.Fatalf("user-level disable should annotate, not clear: %q", p)
 	}
 	write(t, filepath.Join(managed, "managed-settings.d", "99-lock.json"), `{"permissions":{"disableBypassPermissionsMode":"disable"}}`)

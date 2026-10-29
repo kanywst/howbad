@@ -30,6 +30,8 @@ type Agent struct {
 	Name    string `json:"name"`
 	Config  string `json:"config,omitempty"`
 	Posture string `json:"posture,omitempty"`
+	// Note qualifies Posture without changing its value.
+	Note string `json:"note,omitempty"`
 }
 
 type Result struct {

@@ -183,7 +183,7 @@ func fromAgents(env Env) ([]cred.Credential, []Agent) {
 		case bypassOffManaged:
 			a.Posture = ""
 		case bypassOffUser:
-			a.Posture = "bypassPermissions, turned off only in user settings the agent can edit"
+			a.Note = "turned off only in user settings the agent can edit"
 		}
 	}
 	for _, name := range sortedKeys(agentHomes) {
