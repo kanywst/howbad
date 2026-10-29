@@ -2,6 +2,7 @@ package discover
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -561,5 +562,67 @@ func TestNewerAgentConfigPaths(t *testing.T) {
 		if a.Posture != "" {
 			t.Errorf("project .codex/config.toml should not set posture: %+v", a)
 		}
+	}
+}
+
+func TestGCloudTokenAndADC(t *testing.T) {
+	home := t.TempDir()
+	tok := "ya29." + strings.Repeat("t", 40)
+	refresh := "1//" + strings.Repeat("r", 40)
+	dir := filepath.Join(home, ".config", "gcloud")
+	write(t, filepath.Join(dir, "configurations", "config_default"), "[core]\naccount = me@example.com\nproject = acme-prod\n")
+	write(t, filepath.Join(dir, "application_default_credentials.json"), `{"type":"authorized_user","refresh_token":"`+refresh+`"}`)
+	var ran []string
+	env := Env{Home: home, Vars: map[string]string{}, Exec: func(_ context.Context, name string, args ...string) (string, error) {
+		ran = append(ran, name+" "+strings.Join(args, " "))
+		return tok + "\n", nil
+	}}
+	cs := Run(context.Background(), env).Credentials
+	acct, adc := byVia(cs, cred.GCP, "gcloud me@example.com"), byVia(cs, cred.GCP, "Application Default")
+	if acct == nil || acct.Secret() != tok || acct.Ref["project"] != "acme-prod" {
+		t.Fatalf("gcloud account: %+v", acct)
+	}
+	if adc == nil || !strings.Contains(adc.Secret(), refresh) || adc.Ref["type"] != "" {
+		t.Fatalf("ADC: %+v", adc)
+	}
+	first := acct.Fingerprint
+	tok = "ya29." + strings.Repeat("u", 40)
+	if again := byVia(Run(context.Background(), env).Credentials, cred.GCP, "gcloud me@example.com"); again.Fingerprint != first {
+		t.Fatalf("fingerprint changed with a refreshed token: %s vs %s", first, again.Fingerprint)
+	}
+	ran = ran[:1]
+	if len(ran) != 1 || !strings.HasPrefix(ran[0], "gcloud auth print-access-token me@example.com --quiet") {
+		t.Fatalf("helpers run: %v", ran)
+	}
+	b, _ := json.Marshal(cs)
+	if strings.Contains(string(b), tok) || strings.Contains(string(b), refresh) {
+		t.Fatalf("secret in JSON: %s", b)
+	}
+
+	env.Exec = nil
+	acct = byVia(Run(context.Background(), env).Credentials, cred.GCP, "gcloud me@example.com")
+	if acct == nil || acct.Secret() != "" {
+		t.Fatalf("--no-exec should still list the account without a token: %+v", acct)
+	}
+}
+
+func TestGCloudHelperGuards(t *testing.T) {
+	home := t.TempDir()
+	cfg := filepath.Join(home, ".config", "gcloud", "configurations", "config_default")
+	ran := 0
+	env := Env{Home: home, Vars: map[string]string{}, Exec: func(context.Context, string, ...string) (string, error) {
+		ran++
+		return "ya29.x", nil
+	}}
+	write(t, cfg, "[core]\naccount = --access-token-file=/tmp/x\n")
+	Run(context.Background(), env)
+	write(t, cfg, "[core]\naccount = me@example.com\n[auth]\nimpersonate_service_account = deploy@p.iam.gserviceaccount.com\n")
+	env.Offline = true
+	c := byVia(Run(context.Background(), env).Credentials, cred.GCP, "gcloud me@example.com")
+	if ran != 0 {
+		t.Fatalf("gcloud ran %d times (flag-shaped account or --offline)", ran)
+	}
+	if c == nil || c.Ref["impersonate"] != "deploy@p.iam.gserviceaccount.com" {
+		t.Fatalf("%+v", c)
 	}
 }
