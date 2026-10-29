@@ -585,6 +585,12 @@ func TestGCloudTokenAndADC(t *testing.T) {
 	if adc == nil || !strings.Contains(adc.Secret(), refresh) || adc.Ref["type"] != "" {
 		t.Fatalf("ADC: %+v", adc)
 	}
+	first := acct.Fingerprint
+	tok = "ya29." + strings.Repeat("u", 40)
+	if again := byVia(Run(context.Background(), env).Credentials, cred.GCP, "gcloud me@example.com"); again.Fingerprint != first {
+		t.Fatalf("fingerprint changed with a refreshed token: %s vs %s", first, again.Fingerprint)
+	}
+	ran = ran[:1]
 	if len(ran) != 1 || !strings.HasPrefix(ran[0], "gcloud auth print-access-token me@example.com --quiet") {
 		t.Fatalf("helpers run: %v", ran)
 	}

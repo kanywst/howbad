@@ -2,7 +2,9 @@ package discover
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"path/filepath"
 	"regexp"
@@ -386,6 +388,9 @@ func fromGCP(ctx context.Context, env Env) []cred.Credential {
 			if env.Exec != nil && !env.Offline && !strings.HasPrefix(acct, "-") {
 				if s, err := env.Exec(ctx, "gcloud", "auth", "print-access-token", acct, "--quiet", "--verbosity=none"); err == nil && strings.TrimSpace(s) != "" {
 					c = cred.New(cred.GCP, "", env.tilde(cfgPath), strings.TrimSpace(s))
+					// The token rotates; keep the fingerprint stable per account.
+					sum := sha256.Sum256([]byte("gcloud\x00" + acct))
+					c.Fingerprint = hex.EncodeToString(sum[:])[:8]
 				}
 			}
 			c.Via = "gcloud " + acct

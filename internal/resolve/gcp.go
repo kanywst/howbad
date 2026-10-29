@@ -118,6 +118,10 @@ func gcp(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 	if f.Identity == "" {
 		f.Identity = googleEmail(ctx, o, token)
 	}
+	note := ""
+	if c.Ref["impersonate"] != "" {
+		note = "checked as the impersonated service account; " + c.Ref["account"] + " itself was not checked"
+	}
 
 	listed, complete, code, err := listGCPProjects(ctx, o, auth)
 	if err != nil {
@@ -208,6 +212,12 @@ func gcp(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 		f.Status = finding.Partial
 		f.Reach = append(f.Reach, finding.Capability{Severity: finding.High, Inferred: true,
 			What: "use Google Cloud as " + f.Identity + "; no project could be checked"})
+	}
+	if note != "" {
+		if f.Detail != "" {
+			note = f.Detail + "; " + note
+		}
+		f.Detail = note
 	}
 	// Project checks cannot see IAM set on a single bucket, secret or
 	// service account, so without a project-level grant keep the upper bound.

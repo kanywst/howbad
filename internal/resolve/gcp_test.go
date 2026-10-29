@@ -289,8 +289,8 @@ func TestGCPImpersonatedIdentity(t *testing.T) {
 	c := gcloudCred(tok)
 	c.Ref["impersonate"] = "deploy@p.iam.gserviceaccount.com"
 	f := One(context.Background(), c, gcpServer(t, tok, map[string][]string{"acme-prod": {"resourcemanager.projects.setIamPolicy"}}, nil))
-	if f.Identity != "deploy@p.iam.gserviceaccount.com" {
-		t.Fatalf("identity %q", f.Identity)
+	if f.Identity != "deploy@p.iam.gserviceaccount.com" || !strings.Contains(f.Detail, "me@example.com itself was not checked") {
+		t.Fatalf("identity %q detail %q", f.Identity, f.Detail)
 	}
 }
 
