@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -18,6 +19,26 @@ type agentFile struct {
 	path    string
 	toml    bool
 	project bool
+	// settings: a Claude Code settings file, whose env block the agent gets.
+	settings bool
+}
+
+// ClaudeManagedDir holds the admin-deployed settings and MCP servers that
+// outrank everything a user or repo sets.
+func ClaudeManagedDir(goos string, vars map[string]string) string {
+	switch goos {
+	case "darwin":
+		return "/Library/Application Support/ClaudeCode"
+	case "linux":
+		return "/etc/claude-code"
+	case "windows":
+		pf := vars["ProgramFiles"]
+		if pf == "" {
+			pf = `C:\Program Files`
+		}
+		return filepath.Join(pf, "ClaudeCode")
+	}
+	return ""
 }
 
 func agentFiles(env Env) []agentFile {
@@ -28,7 +49,7 @@ func agentFiles(env Env) []agentFile {
 	}
 	files := []agentFile{
 		{agent: "Claude Code", path: filepath.Join(h, ".claude.json")},
-		{agent: "Claude Code", path: filepath.Join(h, ".claude", "settings.json")},
+		{agent: "Claude Code", path: filepath.Join(h, ".claude", "settings.json"), settings: true},
 		{agent: "Claude Desktop", path: filepath.Join(appSupport, "Claude", "claude_desktop_config.json")},
 		{agent: "Cursor", path: filepath.Join(h, ".cursor", "mcp.json")},
 		{agent: "Windsurf", path: filepath.Join(h, ".codeium", "windsurf", "mcp_config.json")},
@@ -44,11 +65,30 @@ func agentFiles(env Env) []agentFile {
 		{agent: "Cline", path: clineSettings(env)},
 		{agent: "Codex", path: filepath.Join(codexHome(env), "config.toml"), toml: true},
 	}
+	if d := env.ClaudeManaged; d != "" {
+		files = append(files,
+			agentFile{agent: "Claude Code", path: filepath.Join(d, "managed-settings.json"), settings: true},
+			agentFile{agent: "Claude Code", path: filepath.Join(d, "managed-mcp.json")},
+		)
+		// Drop-ins merge over managed-settings.json in name order.
+		// ReadDir returns what it read even on error, so use it either way.
+		dropins, _ := os.ReadDir(filepath.Join(d, "managed-settings.d"))
+		n := 0
+		for _, e := range dropins {
+			if filepath.Ext(e.Name()) != ".json" {
+				continue
+			}
+			if n++; n > maxServersPerFile {
+				break
+			}
+			files = append(files, agentFile{agent: "Claude Code", path: filepath.Join(d, "managed-settings.d", e.Name()), settings: true})
+		}
+	}
 	if c != "" && c != h {
 		files = append(files,
 			agentFile{agent: "Claude Code", path: filepath.Join(c, ".mcp.json"), project: true},
-			agentFile{agent: "Claude Code", path: filepath.Join(c, ".claude", "settings.json"), project: true},
-			agentFile{agent: "Claude Code", path: filepath.Join(c, ".claude", "settings.local.json"), project: true},
+			agentFile{agent: "Claude Code", path: filepath.Join(c, ".claude", "settings.json"), project: true, settings: true},
+			agentFile{agent: "Claude Code", path: filepath.Join(c, ".claude", "settings.local.json"), project: true, settings: true},
 			agentFile{agent: "Cursor", path: filepath.Join(c, ".cursor", "mcp.json"), project: true},
 			agentFile{agent: "VS Code", path: filepath.Join(c, ".vscode", "mcp.json"), project: true},
 			agentFile{agent: "Gemini CLI", path: filepath.Join(c, ".gemini", "settings.json"), project: true},
@@ -86,6 +126,9 @@ func fromAgents(env Env) ([]cred.Credential, []Agent) {
 		return a
 	}
 
+	// Only a managed disable is out of the agent's reach; a user-level one
+	// is a file the agent can edit back, so the warning stays, annotated.
+	bypassOffManaged, bypassOffUser := false, false
 	for _, f := range agentFiles(env) {
 		data, err := readConfig(f.path)
 		if err != nil {
@@ -100,9 +143,18 @@ func fromAgents(env Env) ([]cred.Credential, []Agent) {
 			continue
 		}
 		a := mark(f.agent, env.tilde(f.path))
-		// Claude Code ignores bypassPermissions in project settings.
+		// Claude Code ignores bypassPermissions in project settings, and a
+		// project-level disable only covers that project.
 		if p := posture(f.agent, doc); p != "" && !f.project {
 			a.Posture = p
+		}
+		if v, set := bypassDisableValue(doc); f.agent == "Claude Code" && !f.project && set {
+			if env.ClaudeManaged != "" && strings.HasPrefix(f.path, env.ClaudeManaged+string(filepath.Separator)) {
+				// Drop-ins merge in name order, so the last managed value wins.
+				bypassOffManaged = v == "disable"
+			} else if v == "disable" {
+				bypassOffUser = true
+			}
 		}
 		src := env.tilde(f.path)
 		srv := servers(doc)
@@ -118,13 +170,21 @@ func fromAgents(env Env) ([]cred.Credential, []Agent) {
 			}
 			found = append(found, serverCreds(f.agent, name, src, srv[name])...)
 		}
-		if f.agent == "Claude Code" && strings.Contains(filepath.Base(f.path), "settings") {
+		if f.settings {
 			found = append(found, envBlockCreds(f.agent, "Claude Code settings env", src, stringMap(doc["env"]))...)
 		}
 		for i := range found {
 			found[i].RepoLocal = f.project
 		}
 		out = append(out, found...)
+	}
+	if a := found["Claude Code"]; a != nil && a.Posture == "bypassPermissions" {
+		switch {
+		case bypassOffManaged:
+			a.Posture = ""
+		case bypassOffUser:
+			a.Note = "turned off only in user settings the agent can edit"
+		}
 	}
 	for _, name := range sortedKeys(agentHomes) {
 		for _, d := range agentHomes[name] {
@@ -168,6 +228,13 @@ func projectServers(env Env, doc map[string]any) map[string]map[string]any {
 		}
 	}
 	return out
+}
+
+// bypassDisableValue: disableBypassPermissionsMode works from any scope.
+func bypassDisableValue(doc map[string]any) (string, bool) {
+	perms, _ := doc["permissions"].(map[string]any)
+	v, ok := perms["disableBypassPermissionsMode"].(string)
+	return v, ok
 }
 
 func posture(agent string, doc map[string]any) string {

@@ -62,7 +62,7 @@ flowchart LR
 | Google Cloud | gcloud の設定、Application Default Credentials、`$GOOGLE_APPLICATION_CREDENTIALS` | プロジェクトごと: IAM 管理、サービスアカウントのなりすまし、Secret Manager、GKE の認証情報、コード実行、データの読み取り・削除 |
 | Stripe、OpenAI、Anthropic、Google API キー、Hugging Face、データベース URL | 環境変数、MCP 設定 | 形式で判別するだけで、問い合わせはしない |
 
-読むエージェント設定は Claude Code、Codex、Cursor、Gemini CLI、Antigravity、VS Code、GitHub Copilot、Cline、Windsurf、Devin Desktop、Claude Desktop です。確認なしで動く設定のエージェント(Claude Code の `bypassPermissions`、Codex の `danger-full-access`)もレポートで目立たせます。
+読むエージェント設定は Claude Code、Codex、Cursor、Gemini CLI、Antigravity、VS Code、GitHub Copilot、Cline、Windsurf、Devin Desktop、Claude Desktop です。確認なしで動く設定のエージェント(user か managed settings にある Claude Code の `bypassPermissions`。managed の `disableBypassPermissionsMode` があれば除外し、user 設定のものは注記だけ付けます(エージェントが書き戻せるため)。Codex の `danger-full-access`)もレポートで目立たせます。Claude Code の managed settings と `managed-mcp.json` も読みます。
 
 ## 安全性
 
@@ -80,6 +80,7 @@ flowchart LR
 - fine-grained な GitHub トークン、GitHub App のトークン、npm のトークンは、自分の権限を返しません。これらはアカウント側の権限を上限として表示し、`inferred` と付けます。npm の publish には、2FA を回避する設定で作ったトークンでない限り 2FA も要りますが、レジストリはその設定を公開していません。
 - AWS の権限はアタッチされたポリシー名から判断します。カスタムポリシーの中身は評価しません。自分のポリシーを読めないロールは、ロール名から推測します。
 - Google Cloud の権限は、認証情報から一覧できる各プロジェクト(最大 25 件)に `testIamPermissions` を投げて調べます。フォルダ・組織・グループから継承した role も数に入ります。Workload Identity 連携(`external_account`)となりすまし設定はトークン交換せず、推測の上限として表示します。
+- Claude Code の managed settings は、managed settings ディレクトリ(`managed-settings.json`、`managed-settings.d/`、`managed-mcp.json`)から読みます。macOS の構成プロファイルや Windows のレジストリで配布されたポリシーは読みません。
 - OAuth を使うリモート MCP サーバーのトークンは、エージェント自身の保存先(多くは OS のキーチェーン)にあり、`howbad` は読みません。
 - カレントディレクトリの設定(`.mcp.json`、`.npmrc`、`.vscode/mcp.json` など)も読みますが、clone したリポに howbad を操られないようにしています。リポの `.npmrc` にある `${VAR}` は展開しませんし、接続先ホストまでリポの設定から来ているトークンはどこにも送りません。
 

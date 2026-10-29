@@ -626,3 +626,62 @@ func TestGCloudHelperGuards(t *testing.T) {
 		t.Fatalf("%+v", c)
 	}
 }
+
+func TestClaudeManagedSettings(t *testing.T) {
+	home, managed, cwd := t.TempDir(), t.TempDir(), t.TempDir()
+	tok := "ghp_" + strings.Repeat("q", 36)
+	write(t, filepath.Join(managed, "managed-mcp.json"), `{"mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"`+tok+`"}}}}`)
+	// The bypass comes from a drop-in, which merges over managed-settings.json.
+	write(t, filepath.Join(managed, "managed-settings.json"), `{}`)
+	dropTok := "ghp_" + strings.Repeat("v", 36)
+	write(t, filepath.Join(managed, "managed-settings.d", "10-dev.json"), `{"permissions":{"defaultMode":"bypassPermissions"},"env":{"GITHUB_TOKEN":"`+dropTok+`"}}`)
+	env := Env{Home: home, Cwd: cwd, Vars: map[string]string{}, ClaudeManaged: managed}
+	posture := func() string {
+		for _, a := range Run(context.Background(), env).Agents {
+			if a.Name == "Claude Code" {
+				return strings.TrimSuffix(a.Posture+"; "+a.Note, "; ")
+			}
+		}
+		return "missing"
+	}
+	res := Run(context.Background(), env)
+	if len(res.Credentials) != 2 || res.Credentials[0].Kind != cred.GitHub || res.Credentials[1].Kind != cred.GitHub {
+		t.Fatalf("managed-mcp.json or the drop-in env not read: %+v", res.Credentials)
+	}
+	if p := posture(); p != "bypassPermissions" {
+		t.Fatalf("managed bypassPermissions: %q", p)
+	}
+	// A repo cannot switch the warning off for every other project.
+	write(t, filepath.Join(cwd, ".claude", "settings.json"), `{"permissions":{"disableBypassPermissionsMode":"disable"}}`)
+	if p := posture(); p != "bypassPermissions" {
+		t.Fatalf("project-level disable cleared posture: %q", p)
+	}
+	// The agent can edit user settings back, so a user-level disable only
+	// annotates the warning; a managed one removes it.
+	write(t, filepath.Join(home, ".claude", "settings.json"), `{"permissions":{"disableBypassPermissionsMode":"disable"}}`)
+	if p := posture(); p != "bypassPermissions; turned off only in user settings the agent can edit" {
+		t.Fatalf("user-level disable should annotate, not clear: %q", p)
+	}
+	write(t, filepath.Join(managed, "managed-settings.d", "99-lock.json"), `{"permissions":{"disableBypassPermissionsMode":"disable"}}`)
+	if p := posture(); p != "" {
+		t.Fatalf("managed disable should turn bypass off: %q", p)
+	}
+	// A later drop-in can set it back; the merged value decides.
+	write(t, filepath.Join(managed, "managed-settings.d", "99-lock.json"), `{}`)
+	write(t, filepath.Join(managed, "managed-settings.json"), `{"permissions":{"disableBypassPermissionsMode":"disable"}}`)
+	write(t, filepath.Join(managed, "managed-settings.d", "50-reopen.json"), `{"permissions":{"disableBypassPermissionsMode":"allow"}}`)
+	if p := posture(); p == "" {
+		t.Fatal("a later drop-in re-allowing bypass should keep the warning")
+	}
+}
+
+func TestClaudeManagedDirPerOS(t *testing.T) {
+	for _, goos := range []string{"darwin", "linux", "windows"} {
+		if ClaudeManagedDir(goos, nil) == "" {
+			t.Errorf("no managed settings directory for %s", goos)
+		}
+	}
+	if d := ClaudeManagedDir("windows", map[string]string{"ProgramFiles": `D:\Apps`}); !strings.HasPrefix(d, `D:\Apps`) {
+		t.Errorf("windows should follow %%ProgramFiles%%: %s", d)
+	}
+}
