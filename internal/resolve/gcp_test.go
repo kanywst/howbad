@@ -378,3 +378,38 @@ func TestGCPSecretsNeverInOutput(t *testing.T) {
 		}
 	}
 }
+
+func TestGCPProjectListCutShortIsPartial(t *testing.T) {
+	tok := "ya29." + strings.Repeat("l", 40)
+	o := server(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/projects" && r.URL.Query().Get("pageToken") == "":
+			fmt.Fprint(w, `{"projects":[{"projectId":"a"}],"nextPageToken":"p2"}`)
+		case r.URL.Path == "/v1/projects":
+			w.WriteHeader(503)
+		default:
+			fmt.Fprint(w, `{"permissions":["resourcemanager.projects.setIamPolicy"]}`)
+		}
+	})
+	c := gcloudCred(tok)
+	c.Ref["project"] = ""
+	f := One(context.Background(), c, o)
+	if f.Status != finding.Partial || !hasWhat(f, "more Google Cloud projects than could be listed") || !hasWhat(f, "grant anyone any role") {
+		t.Fatalf("%s %+v", f.Status, f.Reach)
+	}
+}
+
+func TestGCPNotFoundCountsWhenListingFailed(t *testing.T) {
+	tok := "ya29." + strings.Repeat("k", 40)
+	o := server(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/projects" {
+			w.WriteHeader(403)
+			return
+		}
+		w.WriteHeader(404)
+	})
+	f := One(context.Background(), gcloudCred(tok), o)
+	if f.Status != finding.Partial || !hasWhat(f, "use 1 more Google Cloud project that could not be checked") {
+		t.Fatalf("%s %+v", f.Status, f.Reach)
+	}
+}

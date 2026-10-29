@@ -119,7 +119,7 @@ func gcp(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 		f.Identity = googleEmail(ctx, o, token)
 	}
 
-	listed, code, err := listGCPProjects(ctx, o, auth)
+	listed, complete, code, err := listGCPProjects(ctx, o, auth)
 	if err != nil {
 		return gcpGuess(netFailure(f, err))
 	}
@@ -140,8 +140,13 @@ func gcp(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 		}
 	}
 	f.Status = finding.OK
-	if code/100 != 2 {
+	listOK := code/100 == 2
+	if !listOK {
 		f.Status, f.Detail = finding.Partial, fmt.Sprintf("could not list projects (HTTP %d)", code)
+	} else if !complete {
+		f.Status, f.Detail = finding.Partial, "the project list was cut short"
+		f.Reach = append(f.Reach, finding.Capability{Severity: finding.High, Inferred: true,
+			What: "use more Google Cloud projects than could be listed"})
 	}
 	if len(projects) == 0 {
 		f.Reach = append(f.Reach, finding.Capability{Severity: finding.High, Inferred: true,
@@ -164,7 +169,7 @@ func gcp(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 		// Only a 404 on a project no listing showed means there is nothing
 		// there. A 403 can be narrowed scopes, a disabled API or VPC-SC, so
 		// it stays unchecked even for a project named only in a config.
-		if err == nil && code == http.StatusNotFound && !visible[p] {
+		if err == nil && code == http.StatusNotFound && !visible[p] && listOK {
 			continue
 		}
 		if err != nil || code/100 != 2 {
@@ -217,7 +222,9 @@ func gcp(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 
 const maxGCPProjectPages = 5
 
-func listGCPProjects(ctx context.Context, o Options, auth map[string]string) ([]string, int, error) {
+// listGCPProjects reports complete=false when a later page failed or the
+// page cap was hit, so a long list is never mistaken for the whole one.
+func listGCPProjects(ctx context.Context, o Options, auth map[string]string) ([]string, bool, int, error) {
 	var ids []string
 	token := ""
 	for range maxGCPProjectPages {
@@ -233,20 +240,22 @@ func listGCPProjects(ctx context.Context, o Options, auth map[string]string) ([]
 		}
 		_, code, err := getJSON(ctx, o.HTTP, u, auth, &page)
 		if err != nil || code/100 != 2 {
-			if len(ids) > 0 && err == nil {
-				break
+			if len(ids) > 0 {
+				sort.Strings(ids)
+				return ids, false, http.StatusOK, nil
 			}
-			return ids, code, err
+			return nil, false, code, err
 		}
 		for _, p := range page.Projects {
 			ids = append(ids, p.ProjectID)
 		}
 		if token = page.NextPageToken; token == "" {
-			break
+			sort.Strings(ids)
+			return ids, true, http.StatusOK, nil
 		}
 	}
 	sort.Strings(ids)
-	return ids, http.StatusOK, nil
+	return ids, false, http.StatusOK, nil
 }
 
 func gcpWhere(projects []string) string {
