@@ -626,3 +626,35 @@ func TestGCloudHelperGuards(t *testing.T) {
 		t.Fatalf("%+v", c)
 	}
 }
+
+func TestClaudeManagedSettings(t *testing.T) {
+	home, managed, cwd := t.TempDir(), t.TempDir(), t.TempDir()
+	tok := "ghp_" + strings.Repeat("q", 36)
+	write(t, filepath.Join(managed, "managed-mcp.json"), `{"mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"`+tok+`"}}}}`)
+	write(t, filepath.Join(managed, "managed-settings.json"), `{"permissions":{"defaultMode":"bypassPermissions"}}`)
+	env := Env{Home: home, Cwd: cwd, Vars: map[string]string{}, ClaudeManaged: managed}
+	posture := func() string {
+		for _, a := range Run(context.Background(), env).Agents {
+			if a.Name == "Claude Code" {
+				return a.Posture
+			}
+		}
+		return "missing"
+	}
+	res := Run(context.Background(), env)
+	if len(res.Credentials) != 1 || res.Credentials[0].Kind != cred.GitHub {
+		t.Fatalf("managed-mcp.json not read: %+v", res.Credentials)
+	}
+	if p := posture(); p != "bypassPermissions" {
+		t.Fatalf("managed bypassPermissions: %q", p)
+	}
+	// A repo cannot switch the warning off for every other project.
+	write(t, filepath.Join(cwd, ".claude", "settings.json"), `{"permissions":{"disableBypassPermissionsMode":"disable"}}`)
+	if p := posture(); p != "bypassPermissions" {
+		t.Fatalf("project-level disable cleared posture: %q", p)
+	}
+	write(t, filepath.Join(home, ".claude", "settings.json"), `{"permissions":{"disableBypassPermissionsMode":"disable"}}`)
+	if p := posture(); p != "" {
+		t.Fatalf("user-level disable should turn bypass off: %q", p)
+	}
+}

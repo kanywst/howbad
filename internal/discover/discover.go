@@ -17,6 +17,9 @@ type Env struct {
 	Cwd  string
 	Vars map[string]string
 	GOOS string
+	// ClaudeManaged is Claude Code's managed settings directory; empty
+	// skips it, which keeps tests off the real machine's files.
+	ClaudeManaged string
 	// Exec runs credential helpers; nil means --no-exec.
 	Exec func(ctx context.Context, name string, args ...string) (string, error)
 	// Offline skips helpers that would reach the network themselves.

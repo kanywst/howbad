@@ -20,6 +20,18 @@ type agentFile struct {
 	project bool
 }
 
+// ClaudeManagedDir holds the admin-deployed settings and MCP servers that
+// outrank everything a user or repo sets.
+func ClaudeManagedDir(goos string) string {
+	switch goos {
+	case "darwin":
+		return "/Library/Application Support/ClaudeCode"
+	case "linux":
+		return "/etc/claude-code"
+	}
+	return ""
+}
+
 func agentFiles(env Env) []agentFile {
 	h, c := env.Home, env.Cwd
 	appSupport := filepath.Join(h, ".config")
@@ -43,6 +55,12 @@ func agentFiles(env Env) []agentFile {
 		{agent: "Antigravity", path: filepath.Join(h, ".gemini", "antigravity", "mcp_config.json")},
 		{agent: "Cline", path: clineSettings(env)},
 		{agent: "Codex", path: filepath.Join(codexHome(env), "config.toml"), toml: true},
+	}
+	if d := env.ClaudeManaged; d != "" {
+		files = append(files,
+			agentFile{agent: "Claude Code", path: filepath.Join(d, "managed-settings.json")},
+			agentFile{agent: "Claude Code", path: filepath.Join(d, "managed-mcp.json")},
+		)
 	}
 	if c != "" && c != h {
 		files = append(files,
@@ -86,6 +104,7 @@ func fromAgents(env Env) ([]cred.Credential, []Agent) {
 		return a
 	}
 
+	bypassOff := false
 	for _, f := range agentFiles(env) {
 		data, err := readConfig(f.path)
 		if err != nil {
@@ -100,9 +119,13 @@ func fromAgents(env Env) ([]cred.Credential, []Agent) {
 			continue
 		}
 		a := mark(f.agent, env.tilde(f.path))
-		// Claude Code ignores bypassPermissions in project settings.
+		// Claude Code ignores bypassPermissions in project settings, and a
+		// project-level disable only covers that project.
 		if p := posture(f.agent, doc); p != "" && !f.project {
 			a.Posture = p
+		}
+		if f.agent == "Claude Code" && !f.project && bypassDisabled(doc) {
+			bypassOff = true
 		}
 		src := env.tilde(f.path)
 		srv := servers(doc)
@@ -125,6 +148,9 @@ func fromAgents(env Env) ([]cred.Credential, []Agent) {
 			found[i].RepoLocal = f.project
 		}
 		out = append(out, found...)
+	}
+	if a := found["Claude Code"]; a != nil && bypassOff && a.Posture == "bypassPermissions" {
+		a.Posture = ""
 	}
 	for _, name := range sortedKeys(agentHomes) {
 		for _, d := range agentHomes[name] {
@@ -168,6 +194,13 @@ func projectServers(env Env, doc map[string]any) map[string]map[string]any {
 		}
 	}
 	return out
+}
+
+// bypassDisabled: disableBypassPermissionsMode works from any scope.
+func bypassDisabled(doc map[string]any) bool {
+	perms, _ := doc["permissions"].(map[string]any)
+	v, _ := perms["disableBypassPermissionsMode"].(string)
+	return v == "disable"
 }
 
 func posture(agent string, doc map[string]any) string {
