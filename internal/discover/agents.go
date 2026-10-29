@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -22,14 +23,18 @@ type agentFile struct {
 
 // ClaudeManagedDir holds the admin-deployed settings and MCP servers that
 // outrank everything a user or repo sets.
-func ClaudeManagedDir(goos string) string {
+func ClaudeManagedDir(goos string, vars map[string]string) string {
 	switch goos {
 	case "darwin":
 		return "/Library/Application Support/ClaudeCode"
 	case "linux":
 		return "/etc/claude-code"
 	case "windows":
-		return `C:\Program Files\ClaudeCode`
+		pf := vars["ProgramFiles"]
+		if pf == "" {
+			pf = `C:\Program Files`
+		}
+		return filepath.Join(pf, "ClaudeCode")
 	}
 	return ""
 }
@@ -63,6 +68,16 @@ func agentFiles(env Env) []agentFile {
 			agentFile{agent: "Claude Code", path: filepath.Join(d, "managed-settings.json")},
 			agentFile{agent: "Claude Code", path: filepath.Join(d, "managed-mcp.json")},
 		)
+		// Drop-ins merge over managed-settings.json in name order.
+		dropins, _ := os.ReadDir(filepath.Join(d, "managed-settings.d"))
+		for i, e := range dropins {
+			if i == maxServersPerFile {
+				break
+			}
+			if filepath.Ext(e.Name()) == ".json" {
+				files = append(files, agentFile{agent: "Claude Code", path: filepath.Join(d, "managed-settings.d", e.Name())})
+			}
+		}
 	}
 	if c != "" && c != h {
 		files = append(files,

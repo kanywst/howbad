@@ -55,7 +55,7 @@ func defaultEnv() discover.Env {
 			vars[k] = v
 		}
 	}
-	return discover.Env{Home: home, Cwd: cwd, Vars: vars, GOOS: runtime.GOOS, Exec: runHelper, ClaudeManaged: discover.ClaudeManagedDir(runtime.GOOS)}
+	return discover.Env{Home: home, Cwd: cwd, Vars: vars, GOOS: runtime.GOOS, Exec: runHelper, ClaudeManaged: discover.ClaudeManagedDir(runtime.GOOS, vars)}
 }
 
 func runHelper(ctx context.Context, name string, args ...string) (string, error) {

@@ -631,7 +631,9 @@ func TestClaudeManagedSettings(t *testing.T) {
 	home, managed, cwd := t.TempDir(), t.TempDir(), t.TempDir()
 	tok := "ghp_" + strings.Repeat("q", 36)
 	write(t, filepath.Join(managed, "managed-mcp.json"), `{"mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"`+tok+`"}}}}`)
-	write(t, filepath.Join(managed, "managed-settings.json"), `{"permissions":{"defaultMode":"bypassPermissions"}}`)
+	// The bypass comes from a drop-in, which merges over managed-settings.json.
+	write(t, filepath.Join(managed, "managed-settings.json"), `{}`)
+	write(t, filepath.Join(managed, "managed-settings.d", "10-dev.json"), `{"permissions":{"defaultMode":"bypassPermissions"}}`)
 	env := Env{Home: home, Cwd: cwd, Vars: map[string]string{}, ClaudeManaged: managed}
 	posture := func() string {
 		for _, a := range Run(context.Background(), env).Agents {
@@ -661,8 +663,11 @@ func TestClaudeManagedSettings(t *testing.T) {
 
 func TestClaudeManagedDirPerOS(t *testing.T) {
 	for _, goos := range []string{"darwin", "linux", "windows"} {
-		if ClaudeManagedDir(goos) == "" {
+		if ClaudeManagedDir(goos, nil) == "" {
 			t.Errorf("no managed settings directory for %s", goos)
 		}
+	}
+	if d := ClaudeManagedDir("windows", map[string]string{"ProgramFiles": `D:\Apps`}); !strings.HasPrefix(d, `D:\Apps`) {
+		t.Errorf("windows should follow %%ProgramFiles%%: %s", d)
 	}
 }
