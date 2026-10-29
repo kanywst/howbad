@@ -633,7 +633,8 @@ func TestClaudeManagedSettings(t *testing.T) {
 	write(t, filepath.Join(managed, "managed-mcp.json"), `{"mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"`+tok+`"}}}}`)
 	// The bypass comes from a drop-in, which merges over managed-settings.json.
 	write(t, filepath.Join(managed, "managed-settings.json"), `{}`)
-	write(t, filepath.Join(managed, "managed-settings.d", "10-dev.json"), `{"permissions":{"defaultMode":"bypassPermissions"}}`)
+	dropTok := "ghp_" + strings.Repeat("v", 36)
+	write(t, filepath.Join(managed, "managed-settings.d", "10-dev.json"), `{"permissions":{"defaultMode":"bypassPermissions"},"env":{"GITHUB_TOKEN":"`+dropTok+`"}}`)
 	env := Env{Home: home, Cwd: cwd, Vars: map[string]string{}, ClaudeManaged: managed}
 	posture := func() string {
 		for _, a := range Run(context.Background(), env).Agents {
@@ -644,8 +645,8 @@ func TestClaudeManagedSettings(t *testing.T) {
 		return "missing"
 	}
 	res := Run(context.Background(), env)
-	if len(res.Credentials) != 1 || res.Credentials[0].Kind != cred.GitHub {
-		t.Fatalf("managed-mcp.json not read: %+v", res.Credentials)
+	if len(res.Credentials) != 2 || res.Credentials[0].Kind != cred.GitHub || res.Credentials[1].Kind != cred.GitHub {
+		t.Fatalf("managed-mcp.json or the drop-in env not read: %+v", res.Credentials)
 	}
 	if p := posture(); p != "bypassPermissions" {
 		t.Fatalf("managed bypassPermissions: %q", p)

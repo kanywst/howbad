@@ -19,6 +19,8 @@ type agentFile struct {
 	path    string
 	toml    bool
 	project bool
+	// settings: a Claude Code settings file, whose env block the agent gets.
+	settings bool
 }
 
 // ClaudeManagedDir holds the admin-deployed settings and MCP servers that
@@ -47,7 +49,7 @@ func agentFiles(env Env) []agentFile {
 	}
 	files := []agentFile{
 		{agent: "Claude Code", path: filepath.Join(h, ".claude.json")},
-		{agent: "Claude Code", path: filepath.Join(h, ".claude", "settings.json")},
+		{agent: "Claude Code", path: filepath.Join(h, ".claude", "settings.json"), settings: true},
 		{agent: "Claude Desktop", path: filepath.Join(appSupport, "Claude", "claude_desktop_config.json")},
 		{agent: "Cursor", path: filepath.Join(h, ".cursor", "mcp.json")},
 		{agent: "Windsurf", path: filepath.Join(h, ".codeium", "windsurf", "mcp_config.json")},
@@ -65,7 +67,7 @@ func agentFiles(env Env) []agentFile {
 	}
 	if d := env.ClaudeManaged; d != "" {
 		files = append(files,
-			agentFile{agent: "Claude Code", path: filepath.Join(d, "managed-settings.json")},
+			agentFile{agent: "Claude Code", path: filepath.Join(d, "managed-settings.json"), settings: true},
 			agentFile{agent: "Claude Code", path: filepath.Join(d, "managed-mcp.json")},
 		)
 		// Drop-ins merge over managed-settings.json in name order.
@@ -79,14 +81,14 @@ func agentFiles(env Env) []agentFile {
 			if n++; n > maxServersPerFile {
 				break
 			}
-			files = append(files, agentFile{agent: "Claude Code", path: filepath.Join(d, "managed-settings.d", e.Name())})
+			files = append(files, agentFile{agent: "Claude Code", path: filepath.Join(d, "managed-settings.d", e.Name()), settings: true})
 		}
 	}
 	if c != "" && c != h {
 		files = append(files,
 			agentFile{agent: "Claude Code", path: filepath.Join(c, ".mcp.json"), project: true},
-			agentFile{agent: "Claude Code", path: filepath.Join(c, ".claude", "settings.json"), project: true},
-			agentFile{agent: "Claude Code", path: filepath.Join(c, ".claude", "settings.local.json"), project: true},
+			agentFile{agent: "Claude Code", path: filepath.Join(c, ".claude", "settings.json"), project: true, settings: true},
+			agentFile{agent: "Claude Code", path: filepath.Join(c, ".claude", "settings.local.json"), project: true, settings: true},
 			agentFile{agent: "Cursor", path: filepath.Join(c, ".cursor", "mcp.json"), project: true},
 			agentFile{agent: "VS Code", path: filepath.Join(c, ".vscode", "mcp.json"), project: true},
 			agentFile{agent: "Gemini CLI", path: filepath.Join(c, ".gemini", "settings.json"), project: true},
@@ -161,7 +163,7 @@ func fromAgents(env Env) ([]cred.Credential, []Agent) {
 			}
 			found = append(found, serverCreds(f.agent, name, src, srv[name])...)
 		}
-		if f.agent == "Claude Code" && strings.Contains(filepath.Base(f.path), "settings") {
+		if f.settings {
 			found = append(found, envBlockCreds(f.agent, "Claude Code settings env", src, stringMap(doc["env"]))...)
 		}
 		for i := range found {
