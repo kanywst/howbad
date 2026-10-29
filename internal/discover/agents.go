@@ -28,6 +28,8 @@ func ClaudeManagedDir(goos string) string {
 		return "/Library/Application Support/ClaudeCode"
 	case "linux":
 		return "/etc/claude-code"
+	case "windows":
+		return `C:\Program Files\ClaudeCode`
 	}
 	return ""
 }

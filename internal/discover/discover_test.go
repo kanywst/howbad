@@ -658,3 +658,11 @@ func TestClaudeManagedSettings(t *testing.T) {
 		t.Fatalf("user-level disable should turn bypass off: %q", p)
 	}
 }
+
+func TestClaudeManagedDirPerOS(t *testing.T) {
+	for _, goos := range []string{"darwin", "linux", "windows"} {
+		if ClaudeManagedDir(goos) == "" {
+			t.Errorf("no managed settings directory for %s", goos)
+		}
+	}
+}
