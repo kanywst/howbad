@@ -24,6 +24,8 @@ type Options struct {
 	NPMRegistry string
 	SlackAPI    string
 	GitLabAPI   string
+	GoogleOAuth string
+	GoogleCRM   string
 }
 
 func (o *Options) defaults() {
@@ -45,6 +47,12 @@ func (o *Options) defaults() {
 	if o.GitLabAPI == "" {
 		o.GitLabAPI = "https://gitlab.com/api/v4"
 	}
+	if o.GoogleOAuth == "" {
+		o.GoogleOAuth = "https://oauth2.googleapis.com"
+	}
+	if o.GoogleCRM == "" {
+		o.GoogleCRM = "https://cloudresourcemanager.googleapis.com"
+	}
 }
 
 type resolver func(ctx context.Context, c cred.Credential, o Options) finding.Finding
@@ -56,6 +64,7 @@ var resolvers = map[cred.Kind]resolver{
 	cred.AWS:    aws,
 	cred.Kube:   kube,
 	cred.GitLab: gitlab,
+	cred.GCP:    gcp,
 }
 
 func All(ctx context.Context, creds []cred.Credential, o Options) []finding.Finding {
@@ -91,6 +100,9 @@ func One(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 		if c.Kind == cred.AWS {
 			return awsOffline(c)
 		}
+		if c.Kind == cred.GCP {
+			return gcpGuess(finding.Finding{Credential: c, Status: finding.Skipped, Detail: "not checked (--offline)"})
+		}
 		return skippedGuess(finding.Finding{Credential: c, Status: finding.Skipped, Detail: "not checked (--offline)"})
 	}
 	return r(ctx, c, o)
@@ -122,18 +134,6 @@ func unverified(c cred.Credential) finding.Finding {
 			what = "connect to database " + h + " with a password"
 		}
 		f.Add(finding.High, what)
-	case cred.GCP:
-		what := "use Google Cloud as " + c.Ref["account"]
-		if p := c.Ref["project"]; p != "" {
-			what += " (project " + p + ")"
-		}
-		if c.Ref["adc"] == "true" {
-			what = "use Google Cloud via Application Default Credentials (any SDK picks them up)"
-		}
-		if c.Ref["keyfile"] == "true" {
-			what = "use Google Cloud as the service account in $GOOGLE_APPLICATION_CREDENTIALS"
-		}
-		f.Add(finding.High, what+"; roles not checked yet")
 	case cred.OpenAI:
 		f.Add(finding.Medium, "spend money on your OpenAI API account")
 	case cred.Anthropic:

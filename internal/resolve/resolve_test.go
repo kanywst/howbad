@@ -25,7 +25,7 @@ func server(t *testing.T, h http.HandlerFunc) Options {
 	t.Helper()
 	s := httptest.NewServer(h)
 	t.Cleanup(s.Close)
-	return Options{HTTP: s.Client(), GitHubAPI: s.URL, NPMRegistry: s.URL, SlackAPI: s.URL, GitLabAPI: s.URL}
+	return Options{HTTP: s.Client(), GitHubAPI: s.URL, NPMRegistry: s.URL, SlackAPI: s.URL, GitLabAPI: s.URL, GoogleOAuth: s.URL, GoogleCRM: s.URL}
 }
 
 func requireBearer(t *testing.T, r *http.Request, tok string) bool {

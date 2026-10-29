@@ -59,7 +59,12 @@ func defaultEnv() discover.Env {
 }
 
 func runHelper(ctx context.Context, name string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	timeout := 5 * time.Second
+	if name == "gcloud" {
+		// Python start-up plus a token refresh.
+		timeout = 15 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	// Otherwise gh auth token echoes $GH_TOKEN, not the keychain token.
@@ -97,7 +102,7 @@ and secrets are never printed.`,
 	}
 	f := cmd.Flags()
 	f.BoolVar(&fl.offline, "offline", false, "find credentials but make no network calls")
-	f.BoolVar(&fl.noExec, "no-exec", false, "do not run credential helpers (gh auth token, credential_process, kubeconfig exec plugins)")
+	f.BoolVar(&fl.noExec, "no-exec", false, "do not run credential helpers (gh auth token, gcloud auth print-access-token, credential_process, kubeconfig exec plugins)")
 	f.BoolVar(&fl.json, "json", false, "print JSON instead of the report")
 	f.BoolVarP(&fl.verbose, "verbose", "v", false, "show low-severity reach and every credential that could not be checked")
 	f.StringVar(&fl.failOn, "fail-on", "", "exit 2 if anything reachable is at or above this severity (info|low|medium|high|critical)")
@@ -121,6 +126,7 @@ func run(ctx context.Context, w, errw io.Writer, env discover.Env, ropts resolve
 	if fl.noExec {
 		env.Exec = nil
 	}
+	env.Offline = fl.offline
 
 	found := discover.Run(ctx, env)
 	creds := found.Credentials
