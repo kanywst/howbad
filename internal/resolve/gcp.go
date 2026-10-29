@@ -115,6 +115,10 @@ func gcp(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 		f.Status, f.Detail = finding.Expired, "Google rejected the token (expired; log in again)"
 		return f
 	}
+	visible := map[string]bool{}
+	for _, p := range listed {
+		visible[p] = true
+	}
 	var projects []string
 	seen := map[string]bool{}
 	for _, p := range append([]string{c.Ref["project"], key.ProjectID, key.QuotaProjectID}, listed...) {
@@ -145,8 +149,10 @@ func gcp(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 			break
 		}
 		have, code, err := testGCPPermissions(ctx, o, auth, p)
-		if err == nil && (code == http.StatusForbidden || code == http.StatusNotFound) {
-			// Not visible to this caller (or gone), so nothing to hold there.
+		// A project named only in a config may not exist or be visible. A
+		// listed one refusing the check means something else (narrowed
+		// scopes, a disabled API, VPC-SC), so it stays unchecked.
+		if err == nil && (code == http.StatusForbidden || code == http.StatusNotFound) && !visible[p] {
 			continue
 		}
 		if err != nil || code/100 != 2 {
@@ -182,11 +188,14 @@ func gcp(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 			What: "use " + plural(failed, "more Google Cloud project", "more Google Cloud projects") + " that could not be checked"})
 	}
 	if checked == 0 && failed == 0 {
+		f.Status = finding.Partial
 		f.Reach = append(f.Reach, finding.Capability{Severity: finding.High, Inferred: true,
 			What: "use Google Cloud as " + f.Identity + "; no project could be checked"})
 	}
 	// Project checks cannot see IAM set on a single bucket, secret or
 	// service account, so without a project-level grant keep the upper bound.
+	// It stays at High like an unchecked credential; Critical here would
+	// rate every Google credential Critical and drown the real ones.
 	if f.Severity() < finding.High {
 		f.Reach = append(f.Reach, finding.Capability{Severity: finding.High, Inferred: true,
 			What: "may hold grants on individual buckets, secrets or service accounts, which project-level checks cannot see"})

@@ -258,7 +258,8 @@ func TestGCPFailedProjectIsPartial(t *testing.T) {
 	c := gcloudCred(tok)
 	c.Ref["project"] = ""
 	f := One(context.Background(), c, o)
-	if f.Status != finding.Partial || !hasWhat(f, "read Secret Manager secrets in 1") || !hasWhat(f, "use 1 more Google Cloud project that could not be checked") {
+	// "hidden" is listed, so its 403 counts as unchecked too.
+	if f.Status != finding.Partial || !hasWhat(f, "read Secret Manager secrets in 1") || !hasWhat(f, "use 2 more Google Cloud projects that could not be checked") {
 		t.Fatalf("%s %+v", f.Status, f.Reach)
 	}
 }
@@ -290,5 +291,25 @@ func TestGCPImpersonatedIdentity(t *testing.T) {
 	f := One(context.Background(), c, gcpServer(t, tok, map[string][]string{"acme-prod": {"resourcemanager.projects.setIamPolicy"}}, nil))
 	if f.Identity != "deploy@p.iam.gserviceaccount.com" {
 		t.Fatalf("identity %q", f.Identity)
+	}
+}
+
+func TestGCPAllChecksRefusedIsPartial(t *testing.T) {
+	tok := "ya29." + strings.Repeat("r", 40)
+	o := server(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/projects" {
+			fmt.Fprint(w, `{"projects":[{"projectId":"owned"}]}`)
+			return
+		}
+		w.WriteHeader(403)
+		fmt.Fprint(w, `{"error":{"status":"PERMISSION_DENIED","details":[{"reason":"ACCESS_TOKEN_SCOPE_INSUFFICIENT"}]}}`)
+	})
+	f := One(context.Background(), gcloudCred(tok), o)
+	if f.Status != finding.Partial || f.Severity() != finding.High || !hasWhat(f, "use 1 more Google Cloud project that could not be checked") {
+		t.Fatalf("%s %+v", f.Status, f.Reach)
+	}
+	// The config-only project (acme-prod) is skipped, the listed one is not.
+	if hasWhat(f, "2 more") {
+		t.Fatalf("config-only 403 counted as unchecked: %+v", f.Reach)
 	}
 }
