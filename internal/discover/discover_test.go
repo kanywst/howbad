@@ -685,3 +685,68 @@ func TestClaudeManagedDirPerOS(t *testing.T) {
 		t.Errorf("windows should follow %%ProgramFiles%%: %s", d)
 	}
 }
+
+func TestContinueConfigs(t *testing.T) {
+	home, cwd := t.TempDir(), t.TempDir()
+	gh := "ghp_" + strings.Repeat("c", 36)
+	ant := "sk-ant-api03-" + strings.Repeat("k", 40)
+	legacy := "ghp_" + strings.Repeat("j", 36)
+	block := "ghp_" + strings.Repeat("w", 36)
+	write(t, filepath.Join(home, ".continue", "config.yaml"), "name: me\nmodels:\n  - name: Claude\n    provider: anthropic\n    apiKey: "+ant+"\n  - name: Local\n    provider: ollama\nmcpServers:\n  - name: github\n    command: npx\n    env:\n      GITHUB_TOKEN: "+gh+"\n")
+	write(t, filepath.Join(home, ".continue", "config.json"), `{"experimental":{"modelContextProtocolServers":[{"transport":{"type":"stdio","command":"x","env":{"GITHUB_TOKEN":"`+legacy+`"}}}]}}`)
+	write(t, filepath.Join(cwd, ".continue", "mcpServers", "gh.yaml"), "name: block\nmcpServers:\n  - name: gh\n    env:\n      GITHUB_TOKEN: "+block+"\n")
+	cs := Run(context.Background(), Env{Home: home, Cwd: cwd, Vars: map[string]string{}}).Credentials
+	want := map[string]bool{gh: false, ant: false, legacy: false, block: false}
+	for _, c := range cs {
+		if _, ok := want[c.Secret()]; ok && len(c.HandedTo) == 1 && c.HandedTo[0] == "Continue" {
+			want[c.Secret()] = true
+		}
+		if c.Secret() == block && !c.RepoLocal {
+			t.Errorf("project block should be repo-local: %+v", c)
+		}
+	}
+	for s, ok := range want {
+		if !ok {
+			t.Errorf("missing %s...: %+v", s[:8], cs)
+		}
+	}
+	if m := byVia(cs, cred.Anthropic, `model "Claude" (Continue)`); m == nil {
+		t.Errorf("model apiKey not classified: %+v", cs)
+	}
+}
+
+func TestContinueNamesAndOddCwd(t *testing.T) {
+	home := t.TempDir()
+	cwd := filepath.Join(t.TempDir(), "[client] repo")
+	a, b, h := "ghp_"+strings.Repeat("1", 36), "ghp_"+strings.Repeat("2", 36), "ghp_"+strings.Repeat("3", 36)
+	write(t, filepath.Join(cwd, ".continue", "mcpServers", "x.yaml"), "mcpServers:\n  - name: gh\n    env: {GITHUB_TOKEN: "+a+"}\n  - name: gh\n    env: {GITHUB_TOKEN: "+b+"}\n  - name: remote\n    url: https://mcp.example\n    requestOptions:\n      headers: {Authorization: Bearer "+h+"}\n")
+	cs := Run(context.Background(), Env{Home: home, Cwd: cwd, Vars: map[string]string{}}).Credentials
+	got := map[string]bool{}
+	for _, c := range cs {
+		got[c.Secret()] = true
+	}
+	if !got[a] || !got[b] || !got[h] {
+		t.Fatalf("lost a server (duplicate name, bracketed cwd or requestOptions headers): %+v", cs)
+	}
+}
+
+func TestContinueGlobalBlocksAndLegacyKeys(t *testing.T) {
+	home := t.TempDir()
+	block := "ghp_" + strings.Repeat("g", 36)
+	auto := "sk-proj-" + strings.Repeat("a", 40)
+	ctxKey := "sk-ant-api03-" + strings.Repeat("p", 40)
+	write(t, filepath.Join(home, ".continue", "mcpServers", "gh.yaml"), "mcpServers:\n  - name: gh\n    env: {GITHUB_TOKEN: "+block+"}\n")
+	write(t, filepath.Join(home, ".continue", "config.json"), `{"tabAutocompleteModel":{"title":"x","provider":"openai","apiKey":"`+auto+`"},
+"contextProviders":[{"name":"docs","params":{"apiKey":"`+ctxKey+`"}}]}`)
+	cs := Run(context.Background(), Env{Home: home, Vars: map[string]string{}}).Credentials
+	got := map[string]*cred.Credential{}
+	for i := range cs {
+		got[cs[i].Secret()] = &cs[i]
+	}
+	if c := got[block]; c == nil || c.RepoLocal {
+		t.Errorf("global ~/.continue/mcpServers block: %+v", c)
+	}
+	if got[auto] == nil || got[ctxKey] == nil {
+		t.Errorf("legacy autocomplete or context provider key missed: %+v", cs)
+	}
+}

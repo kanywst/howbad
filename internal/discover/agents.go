@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"gopkg.in/yaml.v3"
 
 	"github.com/kanywst/howbad/internal/cred"
 )
@@ -18,6 +19,7 @@ type agentFile struct {
 	agent   string
 	path    string
 	toml    bool
+	yaml    bool
 	project bool
 	// settings: a Claude Code settings file, whose env block the agent gets.
 	settings bool
@@ -64,7 +66,10 @@ func agentFiles(env Env) []agentFile {
 		{agent: "Antigravity", path: filepath.Join(h, ".gemini", "antigravity", "mcp_config.json")},
 		{agent: "Cline", path: clineSettings(env)},
 		{agent: "Codex", path: filepath.Join(codexHome(env), "config.toml"), toml: true},
+		{agent: "Continue", path: filepath.Join(h, ".continue", "config.yaml"), yaml: true},
+		{agent: "Continue", path: filepath.Join(h, ".continue", "config.json")},
 	}
+	files = append(files, continueBlocks(filepath.Join(h, ".continue", "mcpServers"), false)...)
 	if d := env.ClaudeManaged; d != "" {
 		files = append(files,
 			agentFile{agent: "Claude Code", path: filepath.Join(d, "managed-settings.json"), settings: true},
@@ -92,6 +97,9 @@ func agentFiles(env Env) []agentFile {
 			agentFile{agent: "Cursor", path: filepath.Join(c, ".cursor", "mcp.json"), project: true},
 			agentFile{agent: "VS Code", path: filepath.Join(c, ".vscode", "mcp.json"), project: true},
 			agentFile{agent: "Gemini CLI", path: filepath.Join(c, ".gemini", "settings.json"), project: true},
+		)
+		files = append(files, continueBlocks(filepath.Join(c, ".continue", "mcpServers"), true)...)
+		files = append(files,
 			agentFile{agent: "Antigravity", path: filepath.Join(c, ".agents", "mcp_config.json"), project: true},
 			agentFile{agent: "Devin Desktop", path: filepath.Join(c, ".devin", "mcp_config.json"), project: true},
 			agentFile{agent: "Devin Desktop", path: filepath.Join(c, ".devin", "mcp_config.local.json"), project: true},
@@ -139,6 +147,10 @@ func fromAgents(env Env) ([]cred.Credential, []Agent) {
 			if _, err := toml.Decode(string(data), &doc); err != nil {
 				continue
 			}
+		} else if f.yaml {
+			if yaml.Unmarshal(data, &doc) != nil {
+				continue
+			}
 		} else if json.Unmarshal(data, &doc) != nil {
 			continue
 		}
@@ -169,6 +181,9 @@ func fromAgents(env Env) ([]cred.Credential, []Agent) {
 				break
 			}
 			found = append(found, serverCreds(f.agent, name, src, srv[name])...)
+		}
+		if f.agent == "Continue" {
+			found = append(found, modelKeyCreds(f.agent, src, doc)...)
 		}
 		if f.settings {
 			found = append(found, envBlockCreds(f.agent, "Claude Code settings env", src, stringMap(doc["env"]))...)
@@ -202,12 +217,90 @@ func fromAgents(env Env) ([]cred.Credential, []Agent) {
 
 func servers(doc map[string]any) map[string]map[string]any {
 	out := map[string]map[string]any{}
+	// Names can repeat across keys and list entries; never let one
+	// server's credentials overwrite another's.
+	put := func(name string, s map[string]any) {
+		key := name
+		for i := 2; out[key] != nil; i++ {
+			key = fmt.Sprintf("%s (%d)", name, i)
+		}
+		out[key] = s
+	}
 	for _, key := range []string{"mcpServers", "servers", "mcp_servers"} {
-		m, _ := doc[key].(map[string]any)
-		for name, s := range m {
-			if sm, ok := s.(map[string]any); ok {
-				out[name] = sm
+		switch m := doc[key].(type) {
+		case map[string]any:
+			for _, name := range sortedKeys(m) {
+				if sm, ok := m[name].(map[string]any); ok {
+					put(name, sm)
+				}
 			}
+		case []any:
+			// Continue's config.yaml lists servers with a name field.
+			for i, s := range m {
+				sm, ok := s.(map[string]any)
+				if !ok {
+					continue
+				}
+				name, _ := sm["name"].(string)
+				if name == "" {
+					name = fmt.Sprintf("#%d", i+1)
+				}
+				put(name, sm)
+			}
+		}
+	}
+	// Continue's legacy config.json nests them under experimental.
+	exp, _ := doc["experimental"].(map[string]any)
+	legacy, _ := exp["modelContextProtocolServers"].([]any)
+	for i, s := range legacy {
+		sm, _ := s.(map[string]any)
+		if t, ok := sm["transport"].(map[string]any); ok {
+			put(fmt.Sprintf("legacy #%d", i+1), t)
+		}
+	}
+	return out
+}
+
+// modelKeyCreds reads the provider keys Continue itself runs on: models,
+// and in the legacy config the autocomplete, embeddings and reranker models
+// and context provider params.
+func modelKeyCreds(agent, src string, doc map[string]any) []cred.Credential {
+	type entry struct {
+		label string
+		m     map[string]any
+	}
+	var entries []entry
+	addList := func(key string, v any) {
+		switch t := v.(type) {
+		case map[string]any:
+			entries = append(entries, entry{key, t})
+		case []any:
+			for i, x := range t {
+				if m, ok := x.(map[string]any); ok {
+					entries = append(entries, entry{fmt.Sprintf("%s #%d", key, i+1), m})
+				}
+			}
+		}
+	}
+	for _, key := range []string{"models", "tabAutocompleteModel", "embeddingsProvider", "reranker", "contextProviders"} {
+		addList(key, doc[key])
+	}
+	var out []cred.Credential
+	for _, e := range entries {
+		label := e.label
+		if name, _ := e.m["name"].(string); name != "" {
+			label = name
+		}
+		params, _ := e.m["params"].(map[string]any)
+		for _, v := range []any{e.m["apiKey"], params["apiKey"]} {
+			key, _ := v.(string)
+			kind, secret, ok := cred.Classify("API_KEY", key)
+			if !ok {
+				continue
+			}
+			c := cred.New(kind, fmt.Sprintf("model %q (%s)", label, agent), src, secret)
+			c.HandedTo = []string{agent}
+			out = append(out, c)
 		}
 	}
 	return out
@@ -268,8 +361,8 @@ func serverCreds(agent, server, src string, s map[string]any) []cred.Credential 
 		}
 	}
 	out = append(out, envBlockCreds(agent, via, src, stringMap(s["env"]))...)
-	for _, hk := range []string{"headers", "http_headers", "auth"} {
-		h := stringMap(s[hk])
+	ro, _ := s["requestOptions"].(map[string]any)
+	for _, h := range []map[string]string{stringMap(s["headers"]), stringMap(s["http_headers"]), stringMap(s["auth"]), stringMap(ro["headers"])} {
 		for _, k := range sortedKeys(h) {
 			add(k, h[k])
 		}
@@ -399,6 +492,25 @@ func normalizeHost(h string) string {
 }
 
 const maxServersPerFile = 200
+
+// continueBlocks lists Continue's per-server block files. Continue also
+// accepts Claude, Cursor and Cline JSON there. ReadDir, not Glob: a path
+// with [ or * in it is not a pattern.
+func continueBlocks(dir string, project bool) []agentFile {
+	entries, _ := os.ReadDir(dir)
+	var out []agentFile
+	for _, e := range entries {
+		ext := filepath.Ext(e.Name())
+		if ext != ".yaml" && ext != ".yml" && ext != ".json" {
+			continue
+		}
+		if len(out) == maxServersPerFile {
+			break
+		}
+		out = append(out, agentFile{agent: "Continue", path: filepath.Join(dir, e.Name()), yaml: ext != ".json", project: project})
+	}
+	return out
+}
 
 func xdgConfig(env Env) string {
 	if d := env.Vars["XDG_CONFIG_HOME"]; d != "" {
