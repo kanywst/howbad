@@ -128,8 +128,8 @@ func TestGCPServiceAccountKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	der, _ := x509.MarshalPKCS8PrivateKey(key)
-	pemKey := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
+	// Older keys come as PKCS#1; both must sign.
+	pemKey := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
 	access := "ya29." + strings.Repeat("s", 40)
 	o := gcpServer(t, access, map[string][]string{"ci-proj": {"iam.serviceAccountKeys.create", "run.services.create"}}, func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
@@ -228,7 +228,67 @@ func TestGCPTooManyProjectsIsUpperBound(t *testing.T) {
 	}
 	f := One(context.Background(), gcloudCred(tok), gcpServer(t, tok, grants, nil))
 	// acme-prod comes from gcloud config and is not in the list, so 29 in all.
-	if !hasWhat(f, "use 4 more Google Cloud projects not checked") || f.Severity() != finding.High {
+	if !hasWhat(f, "use 4 more Google Cloud projects that could not be checked") || f.Severity() != finding.High {
 		t.Fatalf("%+v", f.Reach)
+	}
+}
+
+func TestGCPResourceLevelGrantsKeepUpperBound(t *testing.T) {
+	tok := "ya29." + strings.Repeat("e", 40)
+	f := One(context.Background(), gcloudCred(tok), gcpServer(t, tok, map[string][]string{"acme-prod": {}}, nil))
+	if f.Status != finding.OK || f.Severity() != finding.High || !hasWhat(f, "individual buckets, secrets or service accounts") || !f.Reach[0].Inferred {
+		t.Fatalf("%s %+v", f.Status, f.Reach)
+	}
+}
+
+func TestGCPFailedProjectIsPartial(t *testing.T) {
+	tok := "ya29." + strings.Repeat("f", 40)
+	o := server(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/projects":
+			fmt.Fprint(w, `{"projects":[{"projectId":"ok-proj"},{"projectId":"flaky"},{"projectId":"hidden"}]}`)
+		case strings.Contains(r.URL.Path, "ok-proj"):
+			fmt.Fprint(w, `{"permissions":["secretmanager.versions.access"]}`)
+		case strings.Contains(r.URL.Path, "hidden"):
+			w.WriteHeader(403)
+		default:
+			w.WriteHeader(503)
+		}
+	})
+	c := gcloudCred(tok)
+	c.Ref["project"] = ""
+	f := One(context.Background(), c, o)
+	if f.Status != finding.Partial || !hasWhat(f, "read Secret Manager secrets in 1") || !hasWhat(f, "use 1 more Google Cloud project that could not be checked") {
+		t.Fatalf("%s %+v", f.Status, f.Reach)
+	}
+}
+
+func TestGCPClockSkewIsNotExpired(t *testing.T) {
+	o := gcpServer(t, "unused", nil, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(400)
+		fmt.Fprint(w, `{"error":"invalid_grant","error_description":"Invalid JWT: Token must be a short-lived token (60 minutes) and in a reasonable timeframe."}`)
+	})
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	der, _ := x509.MarshalPKCS8PrivateKey(key)
+	sa, _ := json.Marshal(map[string]string{"type": "service_account", "client_email": "ci@p.iam.gserviceaccount.com",
+		"private_key": string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))})
+	c := cred.New(cred.GCP, "key", "x", string(sa))
+	f := One(context.Background(), c, o)
+	if f.Status != finding.Unverified || !strings.Contains(f.Detail, "clock") || f.Severity() != finding.High {
+		t.Fatalf("%s %q %+v", f.Status, f.Detail, f.Reach)
+	}
+	bad := cred.New(cred.GCP, "key", "x", `{"type":"service_account","private_key":"not a key"}`)
+	if f := One(context.Background(), bad, o); f.Status != finding.Unverified || f.Severity() != finding.High {
+		t.Fatalf("unreadable key: %s %q", f.Status, f.Detail)
+	}
+}
+
+func TestGCPImpersonatedIdentity(t *testing.T) {
+	tok := "ya29." + strings.Repeat("i", 40)
+	c := gcloudCred(tok)
+	c.Ref["impersonate"] = "deploy@p.iam.gserviceaccount.com"
+	f := One(context.Background(), c, gcpServer(t, tok, map[string][]string{"acme-prod": {"resourcemanager.projects.setIamPolicy"}}, nil))
+	if f.Identity != "deploy@p.iam.gserviceaccount.com" {
+		t.Fatalf("identity %q", f.Identity)
 	}
 }

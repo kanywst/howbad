@@ -19,6 +19,8 @@ type Env struct {
 	GOOS string
 	// Exec runs credential helpers; nil means --no-exec.
 	Exec func(ctx context.Context, name string, args ...string) (string, error)
+	// Offline skips helpers that would reach the network themselves.
+	Offline bool
 }
 
 type Agent struct {

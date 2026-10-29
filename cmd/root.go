@@ -59,7 +59,12 @@ func defaultEnv() discover.Env {
 }
 
 func runHelper(ctx context.Context, name string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	timeout := 5 * time.Second
+	if name == "gcloud" {
+		// Python start-up plus a token refresh.
+		timeout = 15 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	// Otherwise gh auth token echoes $GH_TOKEN, not the keychain token.
@@ -121,6 +126,7 @@ func run(ctx context.Context, w, errw io.Writer, env discover.Env, ropts resolve
 	if fl.noExec {
 		env.Exec = nil
 	}
+	env.Offline = fl.offline
 
 	found := discover.Run(ctx, env)
 	creds := found.Credentials

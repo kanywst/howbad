@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/kanywst/howbad/internal/cred"
@@ -76,11 +77,15 @@ func gcp(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 	case key.Type == "authorized_user" || key.Type == "service_account":
 		var err error
 		token, err = googleToken(ctx, o, key)
-		if errors.Is(err, errGoogleRejected) {
+		var unchecked *googleUnchecked
+		switch {
+		case errors.Is(err, errGoogleRejected):
 			f.Status, f.Detail = finding.Expired, "Google rejected it (revoked or expired; log in again)"
 			return f
-		}
-		if err != nil {
+		case errors.As(err, &unchecked):
+			f.Status, f.Detail = finding.Unverified, unchecked.why
+			return gcpGuess(f)
+		case err != nil:
 			return gcpGuess(netFailure(f, err))
 		}
 	default:
@@ -91,20 +96,18 @@ func gcp(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 	}
 
 	auth := map[string]string{"Authorization": "Bearer " + token}
-	f.Identity = key.ClientEmail
-	if f.Identity == "" {
-		f.Identity = c.Ref["account"]
+	// gcloud hands out the impersonated account's token when configured to.
+	for _, id := range []string{c.Ref["impersonate"], key.ClientEmail, c.Ref["account"]} {
+		if id != "" {
+			f.Identity = id
+			break
+		}
 	}
 	if f.Identity == "" {
 		f.Identity = googleEmail(ctx, o, token)
 	}
 
-	var listed struct {
-		Projects []struct {
-			ProjectID string `json:"projectId"`
-		} `json:"projects"`
-	}
-	_, code, err := getJSON(ctx, o.HTTP, o.GoogleCRM+"/v1/projects?pageSize=200&filter=lifecycleState%3AACTIVE", auth, &listed)
+	listed, code, err := listGCPProjects(ctx, o, auth)
 	if err != nil {
 		return gcpGuess(netFailure(f, err))
 	}
@@ -114,7 +117,7 @@ func gcp(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 	}
 	var projects []string
 	seen := map[string]bool{}
-	for _, p := range append([]string{c.Ref["project"], key.ProjectID, key.QuotaProjectID}, projectIDs(listed.Projects)...) {
+	for _, p := range append([]string{c.Ref["project"], key.ProjectID, key.QuotaProjectID}, listed...) {
 		if p != "" && !seen[p] {
 			seen[p] = true
 			projects = append(projects, p)
@@ -131,15 +134,23 @@ func gcp(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 	}
 
 	granted := map[int][]string{}
-	checked, getOnly := 0, []string{}
+	checked, failed, getOnly := 0, 0, []string{}
 	for i, p := range projects {
 		if i == maxGCPProjects {
-			f.Reach = append(f.Reach, finding.Capability{Severity: finding.High, Inferred: true,
-				What: fmt.Sprintf("use %s not checked (only the first %d are)", plural(len(projects)-maxGCPProjects, "more Google Cloud project", "more Google Cloud projects"), maxGCPProjects)})
+			failed += len(projects) - maxGCPProjects
 			break
 		}
-		have, err := testGCPPermissions(ctx, o, auth, p)
-		if err != nil {
+		if ctx.Err() != nil {
+			failed += len(projects) - i
+			break
+		}
+		have, code, err := testGCPPermissions(ctx, o, auth, p)
+		if err == nil && (code == http.StatusForbidden || code == http.StatusNotFound) {
+			// Not visible to this caller (or gone), so nothing to hold there.
+			continue
+		}
+		if err != nil || code/100 != 2 {
+			failed++
 			continue
 		}
 		checked++
@@ -157,10 +168,6 @@ func gcp(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 			getOnly = append(getOnly, p)
 		}
 	}
-	if checked == 0 {
-		f.Status, f.Detail = finding.Partial, "could not test permissions on any project"
-		return gcpGuess(f)
-	}
 	for j, chk := range gcpChecks {
 		if ps := granted[j]; len(ps) > 0 {
 			f.Add(chk.sev, chk.what+" "+gcpWhere(ps), ps...)
@@ -169,7 +176,56 @@ func gcp(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 	if len(getOnly) > 0 {
 		f.Add(finding.Low, "see "+gcpWhere(getOnly), getOnly...)
 	}
+	if failed > 0 {
+		f.Status = finding.Partial
+		f.Reach = append(f.Reach, finding.Capability{Severity: finding.High, Inferred: true,
+			What: "use " + plural(failed, "more Google Cloud project", "more Google Cloud projects") + " that could not be checked"})
+	}
+	if checked == 0 && failed == 0 {
+		f.Reach = append(f.Reach, finding.Capability{Severity: finding.High, Inferred: true,
+			What: "use Google Cloud as " + f.Identity + "; no project could be checked"})
+	}
+	// Project checks cannot see IAM set on a single bucket, secret or
+	// service account, so without a project-level grant keep the upper bound.
+	if f.Severity() < finding.High {
+		f.Reach = append(f.Reach, finding.Capability{Severity: finding.High, Inferred: true,
+			What: "may hold grants on individual buckets, secrets or service accounts, which project-level checks cannot see"})
+	}
 	return f
+}
+
+const maxGCPProjectPages = 5
+
+func listGCPProjects(ctx context.Context, o Options, auth map[string]string) ([]string, int, error) {
+	var ids []string
+	token := ""
+	for range maxGCPProjectPages {
+		var page struct {
+			Projects []struct {
+				ProjectID string `json:"projectId"`
+			} `json:"projects"`
+			NextPageToken string `json:"nextPageToken"`
+		}
+		u := o.GoogleCRM + "/v1/projects?pageSize=200&filter=lifecycleState%3AACTIVE"
+		if token != "" {
+			u += "&pageToken=" + url.QueryEscape(token)
+		}
+		_, code, err := getJSON(ctx, o.HTTP, u, auth, &page)
+		if err != nil || code/100 != 2 {
+			if len(ids) > 0 && err == nil {
+				break
+			}
+			return ids, code, err
+		}
+		for _, p := range page.Projects {
+			ids = append(ids, p.ProjectID)
+		}
+		if token = page.NextPageToken; token == "" {
+			break
+		}
+	}
+	sort.Strings(ids)
+	return ids, http.StatusOK, nil
 }
 
 func gcpWhere(projects []string) string {
@@ -178,17 +234,6 @@ func gcpWhere(projects []string) string {
 		w += ", some look like production"
 	}
 	return w
-}
-
-func projectIDs(ps []struct {
-	ProjectID string `json:"projectId"`
-}) []string {
-	out := make([]string, 0, len(ps))
-	for _, p := range ps {
-		out = append(out, p.ProjectID)
-	}
-	sort.Strings(out)
-	return out
 }
 
 func gcpGuess(f finding.Finding) finding.Finding {
@@ -209,7 +254,7 @@ func gcpGuess(f finding.Finding) finding.Finding {
 
 // testIamPermissions is a read: it reports which of the listed permissions
 // the caller holds and changes nothing.
-func testGCPPermissions(ctx context.Context, o Options, auth map[string]string, project string) (map[string]bool, error) {
+func testGCPPermissions(ctx context.Context, o Options, auth map[string]string, project string) (map[string]bool, int, error) {
 	perms := []string{"resourcemanager.projects.get"}
 	for _, chk := range gcpChecks {
 		perms = append(perms, chk.perms...)
@@ -219,20 +264,22 @@ func testGCPPermissions(ctx context.Context, o Options, auth map[string]string, 
 		Permissions []string `json:"permissions"`
 	}
 	code, err := postGoogle(ctx, o, o.GoogleCRM+"/v1/projects/"+url.PathEscape(project)+":testIamPermissions", "application/json", body, auth, &out)
-	if err != nil {
-		return nil, err
-	}
-	if code/100 != 2 {
-		return nil, fmt.Errorf("HTTP %d", code)
+	if err != nil || code/100 != 2 {
+		return nil, code, err
 	}
 	have := map[string]bool{}
 	for _, p := range out.Permissions {
 		have[p] = true
 	}
-	return have, nil
+	return have, code, nil
 }
 
 var errGoogleRejected = errors.New("rejected by Google")
+
+// googleUnchecked: the credential may well be live, we just could not ask.
+type googleUnchecked struct{ why string }
+
+func (e *googleUnchecked) Error() string { return e.why }
 
 // googleToken always posts to Google's token endpoint: token_uri in the file
 // is ignored, or a planted key file could send its signed assertion elsewhere.
@@ -246,25 +293,32 @@ func googleToken(ctx context.Context, o Options, k googleKey) (string, error) {
 	} else {
 		assertion, err := googleAssertion(k)
 		if err != nil {
-			return "", errGoogleRejected
+			return "", &googleUnchecked{"could not read the service account private key"}
 		}
 		form.Set("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
 		form.Set("assertion", assertion)
 	}
 	var out struct {
 		AccessToken string `json:"access_token"`
+		Error       string `json:"error"`
+		Description string `json:"error_description"`
 	}
 	code, err := postGoogle(ctx, o, o.GoogleOAuth+"/token", "application/x-www-form-urlencoded", []byte(form.Encode()), nil, &out)
 	if err != nil {
 		return "", err
 	}
-	if code == http.StatusBadRequest || code == http.StatusUnauthorized || (code/100 == 2 && out.AccessToken == "") {
+	switch {
+	case code/100 == 2 && out.AccessToken != "":
+		return out.AccessToken, nil
+	// A skewed laptop clock also gets invalid_grant; the key is still live.
+	case out.Error == "invalid_grant" && strings.Contains(out.Description, "timeframe"):
+		return "", &googleUnchecked{"Google refused the signed request; check this machine's clock"}
+	case out.Error == "invalid_grant" || out.Error == "unauthorized_client":
 		return "", errGoogleRejected
+	case code/100 == 4:
+		return "", &googleUnchecked{fmt.Sprintf("token endpoint returned HTTP %d", code)}
 	}
-	if code/100 != 2 {
-		return "", fmt.Errorf("token endpoint returned HTTP %d", code)
-	}
-	return out.AccessToken, nil
+	return "", fmt.Errorf("token endpoint returned HTTP %d", code)
 }
 
 func googleAssertion(k googleKey) (string, error) {
@@ -272,15 +326,17 @@ func googleAssertion(k googleKey) (string, error) {
 	if block == nil {
 		return "", errors.New("no PEM key")
 	}
-	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		return "", err
+	var key *rsa.PrivateKey
+	if parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
+		key, _ = parsed.(*rsa.PrivateKey)
+	} else if k1, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+		key = k1
 	}
-	key, ok := parsed.(*rsa.PrivateKey)
-	if !ok {
+	if key == nil {
 		return "", errors.New("not an RSA key")
 	}
-	now := time.Now()
+	// Back-date a minute so a slightly fast clock is not refused.
+	now := time.Now().Add(-time.Minute)
 	enc := func(v any) string {
 		b, _ := json.Marshal(v)
 		return base64.RawURLEncoding.EncodeToString(b)
@@ -336,8 +392,9 @@ func postGoogle(ctx context.Context, o Options, u, contentType string, body []by
 	if err != nil {
 		return resp.StatusCode, err
 	}
-	if resp.StatusCode/100 == 2 && out != nil {
-		if err := json.Unmarshal(data, out); err != nil {
+	if out != nil {
+		// OAuth errors come back as JSON on a 400, so decode those too.
+		if err := json.Unmarshal(data, out); err != nil && resp.StatusCode/100 == 2 {
 			return resp.StatusCode, fmt.Errorf("decoding %s: %w", req.URL.Path, err)
 		}
 	}

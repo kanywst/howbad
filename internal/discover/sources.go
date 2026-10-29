@@ -385,13 +385,17 @@ func fromGCP(ctx context.Context, env Env) []cred.Credential {
 		if acct := ini["core"]["account"]; acct != "" {
 			c := cred.Credential{Kind: cred.GCP, Sources: []string{env.tilde(cfgPath)}}
 			// gcloud keeps its tokens in a SQLite cache; ask gcloud instead.
-			if env.Exec != nil {
+			// It may refresh over the network, so not under --offline.
+			if env.Exec != nil && !env.Offline && !strings.HasPrefix(acct, "-") {
 				if s, err := env.Exec(ctx, "gcloud", "auth", "print-access-token", acct, "--quiet", "--verbosity=none"); err == nil && strings.TrimSpace(s) != "" {
 					c = cred.New(cred.GCP, "", env.tilde(cfgPath), strings.TrimSpace(s))
 				}
 			}
 			c.Via = "gcloud " + acct
 			c.Ref = map[string]string{"account": acct, "project": ini["core"]["project"]}
+			if sa := ini["auth"]["impersonate_service_account"]; sa != "" {
+				c.Ref["impersonate"] = sa
+			}
 			out = append(out, c)
 		}
 	}

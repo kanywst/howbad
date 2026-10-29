@@ -599,3 +599,24 @@ func TestGCloudTokenAndADC(t *testing.T) {
 		t.Fatalf("--no-exec should still list the account without a token: %+v", acct)
 	}
 }
+
+func TestGCloudHelperGuards(t *testing.T) {
+	home := t.TempDir()
+	cfg := filepath.Join(home, ".config", "gcloud", "configurations", "config_default")
+	ran := 0
+	env := Env{Home: home, Vars: map[string]string{}, Exec: func(context.Context, string, ...string) (string, error) {
+		ran++
+		return "ya29.x", nil
+	}}
+	write(t, cfg, "[core]\naccount = --access-token-file=/tmp/x\n")
+	Run(context.Background(), env)
+	write(t, cfg, "[core]\naccount = me@example.com\n[auth]\nimpersonate_service_account = deploy@p.iam.gserviceaccount.com\n")
+	env.Offline = true
+	c := byVia(Run(context.Background(), env).Credentials, cred.GCP, "gcloud me@example.com")
+	if ran != 0 {
+		t.Fatalf("gcloud ran %d times (flag-shaped account or --offline)", ran)
+	}
+	if c == nil || c.Ref["impersonate"] != "deploy@p.iam.gserviceaccount.com" {
+		t.Fatalf("%+v", c)
+	}
+}
