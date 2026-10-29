@@ -148,10 +148,11 @@ func fromAgents(env Env) ([]cred.Credential, []Agent) {
 		if p := posture(f.agent, doc); p != "" && !f.project {
 			a.Posture = p
 		}
-		if f.agent == "Claude Code" && !f.project && bypassDisabled(doc) {
+		if v, set := bypassDisableValue(doc); f.agent == "Claude Code" && !f.project && set {
 			if env.ClaudeManaged != "" && strings.HasPrefix(f.path, env.ClaudeManaged+string(filepath.Separator)) {
-				bypassOffManaged = true
-			} else {
+				// Drop-ins merge in name order, so the last managed value wins.
+				bypassOffManaged = v == "disable"
+			} else if v == "disable" {
 				bypassOffUser = true
 			}
 		}
@@ -229,11 +230,11 @@ func projectServers(env Env, doc map[string]any) map[string]map[string]any {
 	return out
 }
 
-// bypassDisabled: disableBypassPermissionsMode works from any scope.
-func bypassDisabled(doc map[string]any) bool {
+// bypassDisableValue: disableBypassPermissionsMode works from any scope.
+func bypassDisableValue(doc map[string]any) (string, bool) {
 	perms, _ := doc["permissions"].(map[string]any)
-	v, _ := perms["disableBypassPermissionsMode"].(string)
-	return v == "disable"
+	v, ok := perms["disableBypassPermissionsMode"].(string)
+	return v, ok
 }
 
 func posture(agent string, doc map[string]any) string {

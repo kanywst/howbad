@@ -666,6 +666,13 @@ func TestClaudeManagedSettings(t *testing.T) {
 	if p := posture(); p != "" {
 		t.Fatalf("managed disable should turn bypass off: %q", p)
 	}
+	// A later drop-in can set it back; the merged value decides.
+	write(t, filepath.Join(managed, "managed-settings.d", "99-lock.json"), `{}`)
+	write(t, filepath.Join(managed, "managed-settings.json"), `{"permissions":{"disableBypassPermissionsMode":"disable"}}`)
+	write(t, filepath.Join(managed, "managed-settings.d", "50-reopen.json"), `{"permissions":{"disableBypassPermissionsMode":"allow"}}`)
+	if p := posture(); p == "" {
+		t.Fatal("a later drop-in re-allowing bypass should keep the warning")
+	}
 }
 
 func TestClaudeManagedDirPerOS(t *testing.T) {
