@@ -227,8 +227,8 @@ func TestGCPTooManyProjectsIsUpperBound(t *testing.T) {
 		grants[fmt.Sprintf("p-%02d", i)] = []string{"resourcemanager.projects.get"}
 	}
 	f := One(context.Background(), gcloudCred(tok), gcpServer(t, tok, grants, nil))
-	// acme-prod comes from gcloud config and is not in the list, so 29 in all.
-	if !hasWhat(f, "use 4 more Google Cloud projects that could not be checked") || f.Severity() != finding.High {
+	// 29 in all: acme-prod (from gcloud config, refused) and 4 past the cap of 25.
+	if !hasWhat(f, "use 5 more Google Cloud projects that could not be checked") || f.Severity() != finding.High {
 		t.Fatalf("%+v", f.Reach)
 	}
 }
@@ -305,11 +305,76 @@ func TestGCPAllChecksRefusedIsPartial(t *testing.T) {
 		fmt.Fprint(w, `{"error":{"status":"PERMISSION_DENIED","details":[{"reason":"ACCESS_TOKEN_SCOPE_INSUFFICIENT"}]}}`)
 	})
 	f := One(context.Background(), gcloudCred(tok), o)
-	if f.Status != finding.Partial || f.Severity() != finding.High || !hasWhat(f, "use 1 more Google Cloud project that could not be checked") {
+	// Both the listed project and the config-only acme-prod stay unchecked.
+	if f.Status != finding.Partial || f.Severity() != finding.High || !hasWhat(f, "use 2 more Google Cloud projects that could not be checked") {
 		t.Fatalf("%s %+v", f.Status, f.Reach)
 	}
-	// The config-only project (acme-prod) is skipped, the listed one is not.
-	if hasWhat(f, "2 more") {
-		t.Fatalf("config-only 403 counted as unchecked: %+v", f.Reach)
+}
+
+func TestGCPConfigProjectNotFoundIsSkipped(t *testing.T) {
+	tok := "ya29." + strings.Repeat("n", 40)
+	o := server(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/projects":
+			fmt.Fprint(w, `{"projects":[{"projectId":"real"}]}`)
+		case strings.Contains(r.URL.Path, "real"):
+			fmt.Fprint(w, `{"permissions":["resourcemanager.projects.setIamPolicy"]}`)
+		default:
+			w.WriteHeader(404)
+		}
+	})
+	f := One(context.Background(), gcloudCred(tok), o)
+	if f.Status != finding.OK || hasWhat(f, "could not be checked") {
+		t.Fatalf("a deleted config project should not make the result partial: %s %+v", f.Status, f.Reach)
+	}
+}
+
+// Every GCP path, success or failure, must keep tokens, refresh tokens and
+// private keys out of the finding and its JSON.
+func TestGCPSecretsNeverInOutput(t *testing.T) {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	der, _ := x509.MarshalPKCS8PrivateKey(key)
+	pemKey := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
+	access := "ya29." + strings.Repeat("z", 40)
+	refresh := "1//" + strings.Repeat("y", 40)
+	secrets := []string{access, refresh, "client-secret-" + strings.Repeat("c", 10), strings.Split(pemKey, "\n")[1][:40]}
+	sa, _ := json.Marshal(map[string]string{"type": "service_account", "client_email": "x@p.iam.gserviceaccount.com", "private_key": pemKey})
+	user := `{"type":"authorized_user","client_id":"c","client_secret":"` + secrets[2] + `","refresh_token":"` + refresh + `"}`
+	weird := `{"type":"` + refresh + `"}`
+	handlers := map[string]http.HandlerFunc{
+		"ok": func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/token":
+				fmt.Fprintf(w, `{"access_token":%q}`, access)
+			case "/v1/projects":
+				fmt.Fprint(w, `{"projects":[{"projectId":"p"}]}`)
+			default:
+				fmt.Fprint(w, `{"permissions":["resourcemanager.projects.setIamPolicy"]}`)
+			}
+		},
+		"rejected": func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(400)
+			fmt.Fprintf(w, `{"error":"invalid_grant","error_description":%q}`, refresh)
+		},
+		"5xx": func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(502) },
+	}
+	for name, h := range handlers {
+		o := server(t, h)
+		for _, body := range []string{string(sa), user, weird, `{"type":"service_account","private_key":"` + refresh + `"}`} {
+			c := cred.New(cred.GCP, "adc", "x", body)
+			out := One(context.Background(), c, o)
+			b, _ := json.Marshal(out)
+			text := string(b) + fmt.Sprintf("%v %+v %#v", out, out, out)
+			for _, s := range secrets {
+				if strings.Contains(text, s) {
+					t.Fatalf("%s: secret %q in output: %s", name, s, text)
+				}
+			}
+		}
+		tokOut := One(context.Background(), gcloudCred(access), o)
+		b, _ := json.Marshal(tokOut)
+		if strings.Contains(string(b)+fmt.Sprintf("%+v", tokOut), access) {
+			t.Fatalf("%s: access token in output", name)
+		}
 	}
 }

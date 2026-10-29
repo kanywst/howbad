@@ -43,6 +43,14 @@ var gcpChecks = []struct {
 
 const maxGCPProjects = 25
 
+// knownGoogleTypes are echoed in Detail; anything else in the file is not.
+var knownGoogleTypes = map[string]bool{
+	"external_account":                 true,
+	"external_account_authorized_user": true,
+	"impersonated_service_account":     true,
+	"gdch_service_account":             true,
+}
+
 type googleKey struct {
 	Type           string `json:"type"`
 	ClientID       string `json:"client_id"`
@@ -91,7 +99,11 @@ func gcp(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 	default:
 		// external_account can run a program and impersonation chains go
 		// through other credentials; neither is exchanged here.
-		f.Status, f.Detail = finding.Unverified, fmt.Sprintf("credential type %q is not checked", key.Type)
+		what := "this credential type"
+		if knownGoogleTypes[key.Type] {
+			what = key.Type
+		}
+		f.Status, f.Detail = finding.Unverified, what+" is not checked"
 		return gcpGuess(f)
 	}
 
@@ -149,10 +161,10 @@ func gcp(ctx context.Context, c cred.Credential, o Options) finding.Finding {
 			break
 		}
 		have, code, err := testGCPPermissions(ctx, o, auth, p)
-		// A project named only in a config may not exist or be visible. A
-		// listed one refusing the check means something else (narrowed
-		// scopes, a disabled API, VPC-SC), so it stays unchecked.
-		if err == nil && (code == http.StatusForbidden || code == http.StatusNotFound) && !visible[p] {
+		// Only a 404 on a project no listing showed means there is nothing
+		// there. A 403 can be narrowed scopes, a disabled API or VPC-SC, so
+		// it stays unchecked even for a project named only in a config.
+		if err == nil && code == http.StatusNotFound && !visible[p] {
 			continue
 		}
 		if err != nil || code/100 != 2 {
