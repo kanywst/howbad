@@ -656,9 +656,15 @@ func TestClaudeManagedSettings(t *testing.T) {
 	if p := posture(); p != "bypassPermissions" {
 		t.Fatalf("project-level disable cleared posture: %q", p)
 	}
+	// The agent can edit user settings back, so a user-level disable only
+	// annotates the warning; a managed one removes it.
 	write(t, filepath.Join(home, ".claude", "settings.json"), `{"permissions":{"disableBypassPermissionsMode":"disable"}}`)
+	if p := posture(); !strings.HasPrefix(p, "bypassPermissions, turned off only in user settings") {
+		t.Fatalf("user-level disable should annotate, not clear: %q", p)
+	}
+	write(t, filepath.Join(managed, "managed-settings.d", "99-lock.json"), `{"permissions":{"disableBypassPermissionsMode":"disable"}}`)
 	if p := posture(); p != "" {
-		t.Fatalf("user-level disable should turn bypass off: %q", p)
+		t.Fatalf("managed disable should turn bypass off: %q", p)
 	}
 }
 

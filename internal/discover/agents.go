@@ -126,7 +126,9 @@ func fromAgents(env Env) ([]cred.Credential, []Agent) {
 		return a
 	}
 
-	bypassOff := false
+	// Only a managed disable is out of the agent's reach; a user-level one
+	// is a file the agent can edit back, so the warning stays, annotated.
+	bypassOffManaged, bypassOffUser := false, false
 	for _, f := range agentFiles(env) {
 		data, err := readConfig(f.path)
 		if err != nil {
@@ -147,7 +149,11 @@ func fromAgents(env Env) ([]cred.Credential, []Agent) {
 			a.Posture = p
 		}
 		if f.agent == "Claude Code" && !f.project && bypassDisabled(doc) {
-			bypassOff = true
+			if env.ClaudeManaged != "" && strings.HasPrefix(f.path, env.ClaudeManaged+string(filepath.Separator)) {
+				bypassOffManaged = true
+			} else {
+				bypassOffUser = true
+			}
 		}
 		src := env.tilde(f.path)
 		srv := servers(doc)
@@ -171,8 +177,13 @@ func fromAgents(env Env) ([]cred.Credential, []Agent) {
 		}
 		out = append(out, found...)
 	}
-	if a := found["Claude Code"]; a != nil && bypassOff && a.Posture == "bypassPermissions" {
-		a.Posture = ""
+	if a := found["Claude Code"]; a != nil && a.Posture == "bypassPermissions" {
+		switch {
+		case bypassOffManaged:
+			a.Posture = ""
+		case bypassOffUser:
+			a.Posture = "bypassPermissions, turned off only in user settings the agent can edit"
+		}
 	}
 	for _, name := range sortedKeys(agentHomes) {
 		for _, d := range agentHomes[name] {
