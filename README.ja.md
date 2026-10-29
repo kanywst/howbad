@@ -62,7 +62,7 @@ flowchart LR
 | Google Cloud | gcloud の設定、Application Default Credentials、`$GOOGLE_APPLICATION_CREDENTIALS` | プロジェクトごと: IAM 管理、サービスアカウントのなりすまし、Secret Manager、GKE の認証情報、コード実行、データの読み取り・削除 |
 | Stripe、OpenAI、Anthropic、Google API キー、Hugging Face、データベース URL | 環境変数、MCP 設定 | 形式で判別するだけで、問い合わせはしない |
 
-読むエージェント設定は Claude Code、Codex、Cursor、Gemini CLI、Antigravity、VS Code、GitHub Copilot、Cline、Windsurf、Devin Desktop、Claude Desktop です。確認なしで動く設定のエージェント(user か managed settings にある Claude Code の `bypassPermissions`。managed の `disableBypassPermissionsMode` があれば除外し、user 設定のものは注記だけ付けます(エージェントが書き戻せるため)。Codex の `danger-full-access`)もレポートで目立たせます。Claude Code の managed settings と `managed-mcp.json` も読みます。
+読むエージェント設定は Claude Code、Codex、Cursor、Gemini CLI、Antigravity、VS Code、GitHub Copilot、Cline、Continue、Windsurf、Devin Desktop、Claude Desktop です。確認なしで動く設定のエージェント(user か managed settings にある Claude Code の `bypassPermissions`。managed の `disableBypassPermissionsMode` があれば除外し、user 設定のものは注記だけ付けます(エージェントが書き戻せるため)。Codex の `danger-full-access`)もレポートで目立たせます。Claude Code の managed settings と `managed-mcp.json` も読みます。
 
 ## 安全性
 
