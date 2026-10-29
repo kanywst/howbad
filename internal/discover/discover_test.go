@@ -517,3 +517,49 @@ func TestRepoLocalGitLabHostDoesNotMergeOntoEnvToken(t *testing.T) {
 		t.Fatalf("want the env and repo-local tokens kept apart, got %d: %+v", len(cs), cs)
 	}
 }
+
+func TestNewerAgentConfigPaths(t *testing.T) {
+	home, cwd := t.TempDir(), t.TempDir()
+	cfg := func(n int) string {
+		return `{"mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"ghp_` + strings.Repeat(string(rune('a'+n)), 36) + `"}}}}`
+	}
+	files := map[string]string{
+		filepath.Join(home, ".config", "devin", "config.json"):                       "Devin Desktop",
+		filepath.Join(home, "copilot", "mcp-config.json"):                            "GitHub Copilot",
+		filepath.Join(home, ".gemini", "config", "mcp_config.json"):                  "Antigravity",
+		filepath.Join(home, ".gemini", "antigravity", "mcp_config.json"):             "Antigravity",
+		filepath.Join(home, ".cline", "data", "settings", "cline_mcp_settings.json"): "Cline",
+		filepath.Join(cwd, ".agents", "mcp_config.json"):                             "Antigravity",
+		filepath.Join(cwd, ".devin", "mcp_config.local.json"):                        "Devin Desktop",
+	}
+	n := 0
+	for p := range files {
+		write(t, p, cfg(n))
+		n++
+	}
+	write(t, filepath.Join(home, ".copilot", "mcp-config.json"), cfg(n))
+	write(t, filepath.Join(home, "codex", "config.toml"), "[mcp_servers.gh]\nenv = { GITHUB_TOKEN = \"ghp_"+strings.Repeat("z", 36)+"\" }\n")
+	write(t, filepath.Join(cwd, ".codex", "config.toml"), "sandbox_mode = \"danger-full-access\"\n[mcp_servers.gh]\nenv = { GITHUB_TOKEN = \"ghp_"+strings.Repeat("y", 36)+"\" }\n")
+
+	res := Run(context.Background(), Env{Home: home, Cwd: cwd, Vars: map[string]string{
+		"COPILOT_HOME": filepath.Join(home, "copilot"),
+		"CODEX_HOME":   filepath.Join(home, "codex"),
+	}})
+	got := map[string]int{}
+	for _, c := range res.Credentials {
+		for _, a := range c.HandedTo {
+			got[a]++
+		}
+	}
+	want := map[string]int{"Devin Desktop": 2, "GitHub Copilot": 1, "Antigravity": 3, "Cline": 1, "Codex": 2}
+	for a, w := range want {
+		if got[a] != w {
+			t.Errorf("%s: got %d credentials, want %d (all: %v)", a, got[a], w, got)
+		}
+	}
+	for _, a := range res.Agents {
+		if a.Posture != "" {
+			t.Errorf("project .codex/config.toml should not set posture: %+v", a)
+		}
+	}
+}
