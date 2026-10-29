@@ -46,7 +46,7 @@ flowchart LR
 ```
 
 1. **探す。** あなたの権限で動くプロセスが認証情報を拾える場所をすべて見ます。
-2. **問い合わせる。** 認証情報は、それを発行したプロバイダにだけ送ります。使うのは読み取り専用のエンドポイントだけです(`GET /user`、`whoami`、`sts:GetCallerIdentity`、Kubernetes の `SelfSubjectAccessReview`)。
+2. **問い合わせる。** 認証情報は、それを発行したプロバイダにだけ送ります。使うのは読み取り専用のエンドポイントだけです(`GET /user`、`whoami`、`sts:GetCallerIdentity`、Google Cloud の `testIamPermissions`、Kubernetes の `SelfSubjectAccessReview`)。
 3. **並べる。** 結果を「49 リポに push でき、CI のワークフローも書き換えられる」のような具体的な文にして、深刻度順に出します。
 
 ## 確認する対象
@@ -70,7 +70,7 @@ flowchart LR
 
 - 秘密情報は表示しません。2 つのトークンを見分けられるよう、SHA-256 の先頭 8 桁だけ出します。
 - 各認証情報の発行元以外には何も送りません。テレメトリもありません。
-- 呼び出しはすべて読み取り専用です。唯一の書き込みは Kubernetes の self-review オブジェクトで、これは何も保存しません。
+- 呼び出しはすべて読み取り専用です。唯一の書き込みは Kubernetes の self-review オブジェクトで、これは何も保存しません。Google のリフレッシュトークンとサービスアカウント鍵は、最初に短命のアクセストークンへ交換します。この交換は Google の監査ログに残ります。
 - `--offline` では一切通信しません。`--no-exec` ではヘルパーを起動するもの(`gh auth token`、`gcloud auth print-access-token`、AWS の `credential_process`、kubeconfig の exec プラグイン)をすべて飛ばします。
 
 詳細と脆弱性の報告方法は [SECURITY.md](SECURITY.md) を見てください。

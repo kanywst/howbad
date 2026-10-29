@@ -46,7 +46,7 @@ flowchart LR
 ```
 
 1. **Find.** Every place a process running as you can pick up a credential.
-2. **Ask.** Each credential is sent only to the provider that issued it, through read-only endpoints (`GET /user`, `whoami`, `sts:GetCallerIdentity`, Kubernetes `SelfSubjectAccessReview`).
+2. **Ask.** Each credential is sent only to the provider that issued it, through read-only endpoints (`GET /user`, `whoami`, `sts:GetCallerIdentity`, Google Cloud `testIamPermissions`, Kubernetes `SelfSubjectAccessReview`).
 3. **Rank.** Results become plain capabilities ("push code to 49 repos and rewrite their CI workflows") sorted by severity.
 
 ## What it checks
@@ -70,7 +70,7 @@ Agent configs read: Claude Code, Codex, Cursor, Gemini CLI, Antigravity, VS Code
 
 - Secrets are never printed. Output shows a short SHA-256 fingerprint so you can tell two tokens apart.
 - Nothing is sent anywhere except the provider that issued each credential. There is no telemetry.
-- Every call is read-only. The only writes are Kubernetes self-review objects, which store nothing.
+- Every call is read-only. The only writes are Kubernetes self-review objects, which store nothing. Google refresh tokens and service account keys are first exchanged for a short-lived access token, which shows up in Google's audit logs.
 - `--offline` makes no network calls at all. `--no-exec` skips anything that would run a helper (`gh auth token`, `gcloud auth print-access-token`, AWS `credential_process`, kubeconfig exec plugins).
 
 Read [SECURITY.md](SECURITY.md) for the details and how to report a problem.
