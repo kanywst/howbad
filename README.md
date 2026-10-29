@@ -62,7 +62,7 @@ flowchart LR
 | Google Cloud | gcloud config, Application Default Credentials, `$GOOGLE_APPLICATION_CREDENTIALS` | per project: IAM admin, service account impersonation, Secret Manager, GKE credentials, running code, reading or deleting data |
 | Stripe, OpenAI, Anthropic, Google API keys, Hugging Face, database URLs | env, MCP configs | recognized by format, not called |
 
-Agent configs read: Claude Code, Codex, Cursor, Gemini CLI, Antigravity, VS Code, GitHub Copilot, Cline, Windsurf, Devin Desktop and Claude Desktop. The report also flags agents set to run without asking (Claude Code `bypassPermissions`, Codex `danger-full-access`).
+Agent configs read: Claude Code, Codex, Cursor, Gemini CLI, Antigravity, VS Code, GitHub Copilot, Cline, Windsurf, Devin Desktop and Claude Desktop. The report also flags agents set to run without asking (Claude Code `bypassPermissions` in user or managed settings, cleared by a managed `disableBypassPermissionsMode` and only annotated by a user-level one, which the agent could edit back; Codex `danger-full-access`). Claude Code managed settings and `managed-mcp.json` are read too.
 
 ## Safety
 
@@ -80,6 +80,7 @@ Read [SECURITY.md](SECURITY.md) for the details and how to report a problem.
 - Fine-grained GitHub tokens, GitHub App tokens and npm tokens cannot report their own permissions. For those, `howbad` shows the account's access as an upper bound and marks it `inferred`. npm publishing also needs 2FA unless the token was created to bypass it, which the registry does not expose.
 - AWS permissions come from attached policy names. Custom policies are not evaluated, and a role that cannot read its own policies falls back to its name.
 - Google Cloud permissions come from `testIamPermissions` on each project the credential can list (up to 25), so roles inherited from folders, the organization or groups count. Workload identity federation (`external_account`) and impersonation configs are not exchanged and show as an inferred upper bound.
+- Claude Code managed settings are read from the managed settings directory (`managed-settings.json`, `managed-settings.d/`, `managed-mcp.json`). Policies pushed through macOS configuration profiles or the Windows registry are not read.
 - Remote MCP servers that use OAuth keep their tokens in the agent's own store (often the OS keychain), which `howbad` does not read.
 - Configs inside the current directory (`.mcp.json`, `.npmrc`, `.vscode/mcp.json`, ...) are read, but a cloned repo cannot steer howbad: `${VAR}` in a repo's `.npmrc` is not expanded, and a token whose host also comes from a repo config is not sent anywhere.
 

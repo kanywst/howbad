@@ -207,7 +207,11 @@ func Text(w io.Writer, r Report, verbose bool) {
 		for _, a := range r.Agents {
 			n := a.Name
 			if a.Posture != "" {
-				n += " " + st.sev[finding.High].Render("("+a.Posture+")")
+				p := a.Posture
+				if a.Note != "" {
+					p += "; " + a.Note
+				}
+				n += " " + st.sev[finding.High].Render("("+p+")")
 			}
 			names = append(names, n)
 		}
