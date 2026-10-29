@@ -33,9 +33,16 @@ func agentFiles(env Env) []agentFile {
 		{agent: "Cursor", path: filepath.Join(h, ".cursor", "mcp.json")},
 		{agent: "Windsurf", path: filepath.Join(h, ".codeium", "windsurf", "mcp_config.json")},
 		{agent: "Devin Desktop", path: filepath.Join(xdgConfig(env), "devin", "mcp_config.json")},
+		// Devin CLI before 3000.3 kept mcpServers in config.json.
+		{agent: "Devin Desktop", path: filepath.Join(xdgConfig(env), "devin", "config.json")},
 		{agent: "VS Code", path: filepath.Join(appSupport, "Code", "User", "mcp.json")},
+		{agent: "GitHub Copilot", path: filepath.Join(copilotHome(env), "mcp-config.json")},
 		{agent: "Gemini CLI", path: filepath.Join(h, ".gemini", "settings.json")},
-		{agent: "Codex", path: filepath.Join(h, ".codex", "config.toml"), toml: true},
+		{agent: "Antigravity", path: filepath.Join(h, ".gemini", "config", "mcp_config.json")},
+		{agent: "Antigravity", path: filepath.Join(h, ".gemini", "antigravity-cli", "mcp_config.json")},
+		{agent: "Antigravity", path: filepath.Join(h, ".gemini", "antigravity", "mcp_config.json")},
+		{agent: "Cline", path: clineSettings(env)},
+		{agent: "Codex", path: filepath.Join(codexHome(env), "config.toml"), toml: true},
 	}
 	if c != "" && c != h {
 		files = append(files,
@@ -45,18 +52,24 @@ func agentFiles(env Env) []agentFile {
 			agentFile{agent: "Cursor", path: filepath.Join(c, ".cursor", "mcp.json"), project: true},
 			agentFile{agent: "VS Code", path: filepath.Join(c, ".vscode", "mcp.json"), project: true},
 			agentFile{agent: "Gemini CLI", path: filepath.Join(c, ".gemini", "settings.json"), project: true},
+			agentFile{agent: "Antigravity", path: filepath.Join(c, ".agents", "mcp_config.json"), project: true},
+			agentFile{agent: "Devin Desktop", path: filepath.Join(c, ".devin", "mcp_config.json"), project: true},
+			agentFile{agent: "Devin Desktop", path: filepath.Join(c, ".devin", "mcp_config.local.json"), project: true},
+			agentFile{agent: "Codex", path: filepath.Join(c, ".codex", "config.toml"), toml: true, project: true},
 		)
 	}
 	return files
 }
 
 var agentHomes = map[string][]string{
-	"Claude Code":   {".claude"},
-	"Codex":         {".codex"},
-	"Cursor":        {".cursor"},
-	"Gemini CLI":    {".gemini"},
-	"Windsurf":      {".codeium/windsurf"},
-	"Devin Desktop": {".config/devin"},
+	"Claude Code":    {".claude"},
+	"Codex":          {".codex"},
+	"Cursor":         {".cursor"},
+	"Gemini CLI":     {".gemini"},
+	"Windsurf":       {".codeium/windsurf"},
+	"Devin Desktop":  {".config/devin"},
+	"GitHub Copilot": {".copilot"},
+	"Cline":          {".cline"},
 }
 
 func fromAgents(env Env) ([]cred.Credential, []Agent) {
@@ -325,6 +338,28 @@ func xdgConfig(env Env) string {
 		return d
 	}
 	return filepath.Join(env.Home, ".config")
+}
+
+func codexHome(env Env) string {
+	if d := env.Vars["CODEX_HOME"]; d != "" {
+		return d
+	}
+	return filepath.Join(env.Home, ".codex")
+}
+
+// copilotHome: when COPILOT_HOME is set, the default is not read at all.
+func copilotHome(env Env) string {
+	if d := env.Vars["COPILOT_HOME"]; d != "" {
+		return d
+	}
+	return filepath.Join(env.Home, ".copilot")
+}
+
+func clineSettings(env Env) string {
+	if p := env.Vars["CLINE_MCP_SETTINGS_PATH"]; p != "" {
+		return p
+	}
+	return filepath.Join(env.Home, ".cline", "data", "settings", "cline_mcp_settings.json")
 }
 
 func stringMap(v any) map[string]string {
