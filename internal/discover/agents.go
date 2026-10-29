@@ -69,6 +69,7 @@ func agentFiles(env Env) []agentFile {
 		{agent: "Continue", path: filepath.Join(h, ".continue", "config.yaml"), yaml: true},
 		{agent: "Continue", path: filepath.Join(h, ".continue", "config.json")},
 	}
+	files = append(files, continueBlocks(filepath.Join(h, ".continue", "mcpServers"), false)...)
 	if d := env.ClaudeManaged; d != "" {
 		files = append(files,
 			agentFile{agent: "Claude Code", path: filepath.Join(d, "managed-settings.json"), settings: true},
@@ -97,22 +98,7 @@ func agentFiles(env Env) []agentFile {
 			agentFile{agent: "VS Code", path: filepath.Join(c, ".vscode", "mcp.json"), project: true},
 			agentFile{agent: "Gemini CLI", path: filepath.Join(c, ".gemini", "settings.json"), project: true},
 		)
-		// Continue also accepts Claude, Cursor and Cline JSON in this folder.
-		// ReadDir, not Glob: a cwd with [ or * in it is not a pattern.
-		blockDir := filepath.Join(c, ".continue", "mcpServers")
-		blocks, _ := os.ReadDir(blockDir)
-		n := 0
-		for _, e := range blocks {
-			b := filepath.Join(blockDir, e.Name())
-			ext := filepath.Ext(b)
-			if ext != ".yaml" && ext != ".yml" && ext != ".json" {
-				continue
-			}
-			if n++; n > maxServersPerFile {
-				break
-			}
-			files = append(files, agentFile{agent: "Continue", path: b, yaml: ext != ".json", project: true})
-		}
+		files = append(files, continueBlocks(filepath.Join(c, ".continue", "mcpServers"), true)...)
 		files = append(files,
 			agentFile{agent: "Antigravity", path: filepath.Join(c, ".agents", "mcp_config.json"), project: true},
 			agentFile{agent: "Devin Desktop", path: filepath.Join(c, ".devin", "mcp_config.json"), project: true},
@@ -275,25 +261,47 @@ func servers(doc map[string]any) map[string]map[string]any {
 	return out
 }
 
-// modelKeyCreds reads apiKey from Continue's models list, the provider keys
-// the agent itself runs on.
+// modelKeyCreds reads the provider keys Continue itself runs on: models,
+// and in the legacy config the autocomplete, embeddings and reranker models
+// and context provider params.
 func modelKeyCreds(agent, src string, doc map[string]any) []cred.Credential {
-	models, _ := doc["models"].([]any)
+	type entry struct {
+		label string
+		m     map[string]any
+	}
+	var entries []entry
+	addList := func(key string, v any) {
+		switch t := v.(type) {
+		case map[string]any:
+			entries = append(entries, entry{key, t})
+		case []any:
+			for i, x := range t {
+				if m, ok := x.(map[string]any); ok {
+					entries = append(entries, entry{fmt.Sprintf("%s #%d", key, i+1), m})
+				}
+			}
+		}
+	}
+	for _, key := range []string{"models", "tabAutocompleteModel", "embeddingsProvider", "reranker", "contextProviders"} {
+		addList(key, doc[key])
+	}
 	var out []cred.Credential
-	for i, m := range models {
-		mm, _ := m.(map[string]any)
-		key, _ := mm["apiKey"].(string)
-		name, _ := mm["name"].(string)
-		if name == "" {
-			name = fmt.Sprintf("#%d", i+1)
+	for _, e := range entries {
+		label := e.label
+		if name, _ := e.m["name"].(string); name != "" {
+			label = name
 		}
-		kind, secret, ok := cred.Classify("API_KEY", key)
-		if !ok {
-			continue
+		params, _ := e.m["params"].(map[string]any)
+		for _, v := range []any{e.m["apiKey"], params["apiKey"]} {
+			key, _ := v.(string)
+			kind, secret, ok := cred.Classify("API_KEY", key)
+			if !ok {
+				continue
+			}
+			c := cred.New(kind, fmt.Sprintf("model %q (%s)", label, agent), src, secret)
+			c.HandedTo = []string{agent}
+			out = append(out, c)
 		}
-		c := cred.New(kind, fmt.Sprintf("model %q (%s)", name, agent), src, secret)
-		c.HandedTo = []string{agent}
-		out = append(out, c)
 	}
 	return out
 }
@@ -484,6 +492,25 @@ func normalizeHost(h string) string {
 }
 
 const maxServersPerFile = 200
+
+// continueBlocks lists Continue's per-server block files. Continue also
+// accepts Claude, Cursor and Cline JSON there. ReadDir, not Glob: a path
+// with [ or * in it is not a pattern.
+func continueBlocks(dir string, project bool) []agentFile {
+	entries, _ := os.ReadDir(dir)
+	var out []agentFile
+	for _, e := range entries {
+		ext := filepath.Ext(e.Name())
+		if ext != ".yaml" && ext != ".yml" && ext != ".json" {
+			continue
+		}
+		if len(out) == maxServersPerFile {
+			break
+		}
+		out = append(out, agentFile{agent: "Continue", path: filepath.Join(dir, e.Name()), yaml: ext != ".json", project: project})
+	}
+	return out
+}
 
 func xdgConfig(env Env) string {
 	if d := env.Vars["XDG_CONFIG_HOME"]; d != "" {

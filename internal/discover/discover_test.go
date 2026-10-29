@@ -729,3 +729,24 @@ func TestContinueNamesAndOddCwd(t *testing.T) {
 		t.Fatalf("lost a server (duplicate name, bracketed cwd or requestOptions headers): %+v", cs)
 	}
 }
+
+func TestContinueGlobalBlocksAndLegacyKeys(t *testing.T) {
+	home := t.TempDir()
+	block := "ghp_" + strings.Repeat("g", 36)
+	auto := "sk-proj-" + strings.Repeat("a", 40)
+	ctxKey := "sk-ant-api03-" + strings.Repeat("p", 40)
+	write(t, filepath.Join(home, ".continue", "mcpServers", "gh.yaml"), "mcpServers:\n  - name: gh\n    env: {GITHUB_TOKEN: "+block+"}\n")
+	write(t, filepath.Join(home, ".continue", "config.json"), `{"tabAutocompleteModel":{"title":"x","provider":"openai","apiKey":"`+auto+`"},
+"contextProviders":[{"name":"docs","params":{"apiKey":"`+ctxKey+`"}}]}`)
+	cs := Run(context.Background(), Env{Home: home, Vars: map[string]string{}}).Credentials
+	got := map[string]*cred.Credential{}
+	for i := range cs {
+		got[cs[i].Secret()] = &cs[i]
+	}
+	if c := got[block]; c == nil || c.RepoLocal {
+		t.Errorf("global ~/.continue/mcpServers block: %+v", c)
+	}
+	if got[auto] == nil || got[ctxKey] == nil {
+		t.Errorf("legacy autocomplete or context provider key missed: %+v", cs)
+	}
+}
