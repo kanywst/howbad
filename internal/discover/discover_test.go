@@ -763,6 +763,7 @@ func TestZedContextServers(t *testing.T) {
     "gh": { "command": "gh-mcp", "args": ["--token", "` + ghp('a') + `"], "env": { "GITHUB_TOKEN": "` + ghp('b') + `" } },
     "remote": { "url": "https://mcp.example.com/mcp", "headers": { "Authorization": "Bearer ` + ghp('c') + `" }, "oauth": { "client_id": "id", "client_secret": "` + strings.Repeat("s", 32) + `" } },
     "ext": { "source": "extension", "settings": { "github_personal_access_token": "` + ghp('d') + `" }, },
+    "old": { "command": { "path": "gh-mcp", "args": ["--token", "` + ghp('g') + `"], "env": { "GITHUB_TOKEN": "` + ghp('h') + `" } } },
   },
 }
 `
@@ -782,9 +783,10 @@ func TestZedContextServers(t *testing.T) {
 			}
 		}
 	}
-	// gh: arg + env; remote: header + client_secret; ext: PAT; global: 1; project: 1.
-	if zed != 7 || repoLocal != 1 {
-		t.Errorf("Zed credentials: got %d (repo-local %d), want 7 (1): %+v", zed, repoLocal, res.Credentials)
+	// gh: arg + env; remote: header + client_secret; ext: PAT; old nested
+	// command: arg + env; global: 1; project: 1.
+	if zed != 9 || repoLocal != 1 {
+		t.Errorf("Zed credentials: got %d (repo-local %d), want 9 (1): %+v", zed, repoLocal, res.Credentials)
 	}
 	var found bool
 	for _, a := range res.Agents {
