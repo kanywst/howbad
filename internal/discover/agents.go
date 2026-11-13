@@ -393,6 +393,11 @@ func serverCreds(agent, server, src string, s map[string]any) []cred.Credential 
 		}
 	}
 	args := stringSlice(s["args"])
+	// Zed before mid-2025 nested the stdio command: "command": {"path", "args", "env"}.
+	if cmd, ok := s["command"].(map[string]any); ok {
+		out = append(out, envBlockCreds(agent, via, src, stringMap(cmd["env"]))...)
+		args = append(stringSlice(cmd["args"]), args...)
+	}
 	for i, a := range args {
 		switch {
 		case strings.Contains(a, "="):
