@@ -23,6 +23,8 @@ type agentFile struct {
 	project bool
 	// settings: a Claude Code settings file, whose env block the agent gets.
 	settings bool
+	// jsonc: the editor writes comments and trailing commas into the file.
+	jsonc bool
 }
 
 // ClaudeManagedDir holds the admin-deployed settings and MCP servers that
@@ -58,7 +60,9 @@ func agentFiles(env Env) []agentFile {
 		{agent: "Devin Desktop", path: filepath.Join(xdgConfig(env), "devin", "mcp_config.json")},
 		// Devin CLI before 3000.3 kept mcpServers in config.json.
 		{agent: "Devin Desktop", path: filepath.Join(xdgConfig(env), "devin", "config.json")},
-		{agent: "VS Code", path: filepath.Join(appSupport, "Code", "User", "mcp.json")},
+		{agent: "VS Code", path: filepath.Join(appSupport, "Code", "User", "mcp.json"), jsonc: true},
+		{agent: "Zed", path: filepath.Join(zedConfigDir(env), "settings.json"), jsonc: true},
+		{agent: "Zed", path: filepath.Join(zedConfigDir(env), "global_settings.json"), jsonc: true},
 		{agent: "GitHub Copilot", path: filepath.Join(copilotHome(env), "mcp-config.json")},
 		{agent: "Gemini CLI", path: filepath.Join(h, ".gemini", "settings.json")},
 		{agent: "Antigravity", path: filepath.Join(h, ".gemini", "config", "mcp_config.json")},
@@ -95,7 +99,8 @@ func agentFiles(env Env) []agentFile {
 			agentFile{agent: "Claude Code", path: filepath.Join(c, ".claude", "settings.json"), project: true, settings: true},
 			agentFile{agent: "Claude Code", path: filepath.Join(c, ".claude", "settings.local.json"), project: true, settings: true},
 			agentFile{agent: "Cursor", path: filepath.Join(c, ".cursor", "mcp.json"), project: true},
-			agentFile{agent: "VS Code", path: filepath.Join(c, ".vscode", "mcp.json"), project: true},
+			agentFile{agent: "VS Code", path: filepath.Join(c, ".vscode", "mcp.json"), project: true, jsonc: true},
+			agentFile{agent: "Zed", path: filepath.Join(c, ".zed", "settings.json"), project: true, jsonc: true},
 			agentFile{agent: "Gemini CLI", path: filepath.Join(c, ".gemini", "settings.json"), project: true},
 		)
 		files = append(files, continueBlocks(filepath.Join(c, ".continue", "mcpServers"), true)...)
@@ -118,6 +123,7 @@ var agentHomes = map[string][]string{
 	"Devin Desktop":  {".config/devin"},
 	"GitHub Copilot": {".copilot"},
 	"Cline":          {".cline"},
+	"Zed":            {".config/zed"},
 }
 
 func fromAgents(env Env) ([]cred.Credential, []Agent) {
@@ -151,8 +157,13 @@ func fromAgents(env Env) ([]cred.Credential, []Agent) {
 			if yaml.Unmarshal(data, &doc) != nil {
 				continue
 			}
-		} else if json.Unmarshal(data, &doc) != nil {
-			continue
+		} else {
+			if f.jsonc {
+				data = stripJSONC(data)
+			}
+			if json.Unmarshal(data, &doc) != nil {
+				continue
+			}
 		}
 		a := mark(f.agent, env.tilde(f.path))
 		// Claude Code ignores bypassPermissions in project settings, and a
@@ -226,7 +237,7 @@ func servers(doc map[string]any) map[string]map[string]any {
 		}
 		out[key] = s
 	}
-	for _, key := range []string{"mcpServers", "servers", "mcp_servers"} {
+	for _, key := range []string{"mcpServers", "servers", "mcp_servers", "context_servers"} {
 		switch m := doc[key].(type) {
 		case map[string]any:
 			for _, name := range sortedKeys(m) {
@@ -346,6 +357,17 @@ func posture(agent string, doc map[string]any) string {
 		if sandbox == "danger-full-access" {
 			return "danger-full-access"
 		}
+	case "Zed":
+		// agent.tool_permissions.default replaced always_allow_tool_actions
+		// in 2026-02; Zed migrates the file in place, so both still occur.
+		ag, _ := doc["agent"].(map[string]any)
+		tp, _ := ag["tool_permissions"].(map[string]any)
+		if d, _ := tp["default"].(string); d == "allow" {
+			return "tool_permissions.default allow"
+		}
+		if v, _ := ag["always_allow_tool_actions"].(bool); v {
+			return "always_allow_tool_actions"
+		}
 	}
 	return ""
 }
@@ -362,7 +384,10 @@ func serverCreds(agent, server, src string, s map[string]any) []cred.Credential 
 	}
 	out = append(out, envBlockCreds(agent, via, src, stringMap(s["env"]))...)
 	ro, _ := s["requestOptions"].(map[string]any)
-	for _, h := range []map[string]string{stringMap(s["headers"]), stringMap(s["http_headers"]), stringMap(s["auth"]), stringMap(ro["headers"])} {
+	// Zed: oauth.client_secret on a remote server, and the values an
+	// extension-provided server is configured with (a PAT, typically).
+	oauth, _ := s["oauth"].(map[string]any)
+	for _, h := range []map[string]string{stringMap(s["headers"]), stringMap(s["http_headers"]), stringMap(s["auth"]), stringMap(ro["headers"]), stringMap(oauth), stringMap(s["settings"])} {
 		for _, k := range sortedKeys(h) {
 			add(k, h[k])
 		}
@@ -517,6 +542,20 @@ func xdgConfig(env Env) string {
 		return d
 	}
 	return filepath.Join(env.Home, ".config")
+}
+
+// zedConfigDir follows crates/paths in Zed: %APPDATA%\Zed on Windows,
+// $XDG_CONFIG_HOME/zed on Linux, and always ~/.config/zed on macOS.
+func zedConfigDir(env Env) string {
+	switch env.GOOS {
+	case "windows":
+		if d := env.Vars["APPDATA"]; d != "" {
+			return filepath.Join(d, "Zed")
+		}
+	case "linux", "freebsd":
+		return filepath.Join(xdgConfig(env), "zed")
+	}
+	return filepath.Join(env.Home, ".config", "zed")
 }
 
 func codexHome(env Env) string {

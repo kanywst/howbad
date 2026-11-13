@@ -750,3 +750,90 @@ func TestContinueGlobalBlocksAndLegacyKeys(t *testing.T) {
 		t.Errorf("legacy autocomplete or context provider key missed: %+v", cs)
 	}
 }
+
+func TestZedContextServers(t *testing.T) {
+	home, cwd := t.TempDir(), t.TempDir()
+	ghp := func(r rune) string { return "ghp_" + strings.Repeat(string(r), 36) }
+	user := `// Zed settings
+{
+  "agent": {
+    "tool_permissions": { "default": "allow", }, /* no prompts */
+  },
+  "context_servers": {
+    "gh": { "command": "gh-mcp", "args": ["--token", "` + ghp('a') + `"], "env": { "GITHUB_TOKEN": "` + ghp('b') + `" } },
+    "remote": { "url": "https://mcp.example.com/mcp", "headers": { "Authorization": "Bearer ` + ghp('c') + `" }, "oauth": { "client_id": "id", "client_secret": "` + strings.Repeat("s", 32) + `" } },
+    "ext": { "source": "extension", "settings": { "github_personal_access_token": "` + ghp('d') + `" }, },
+  },
+}
+`
+	write(t, filepath.Join(home, ".config", "zed", "settings.json"), user)
+	write(t, filepath.Join(home, ".config", "zed", "global_settings.json"), `{"context_servers":{"g":{"env":{"GITHUB_TOKEN":"`+ghp('e')+`"}}}}`)
+	write(t, filepath.Join(cwd, ".zed", "settings.json"), `{"agent":{"always_allow_tool_actions":true},"context_servers":{"p":{"env":{"GITHUB_TOKEN":"`+ghp('f')+`"}}}}`)
+
+	res := Run(context.Background(), Env{Home: home, Cwd: cwd, Vars: map[string]string{}})
+	var zed, repoLocal int
+	for _, c := range res.Credentials {
+		for _, a := range c.HandedTo {
+			if a == "Zed" {
+				zed++
+				if c.RepoLocal {
+					repoLocal++
+				}
+			}
+		}
+	}
+	// gh: arg + env; remote: header + client_secret; ext: PAT; global: 1; project: 1.
+	if zed != 7 || repoLocal != 1 {
+		t.Errorf("Zed credentials: got %d (repo-local %d), want 7 (1): %+v", zed, repoLocal, res.Credentials)
+	}
+	var found bool
+	for _, a := range res.Agents {
+		if a.Name != "Zed" {
+			continue
+		}
+		found = true
+		if a.Posture != "tool_permissions.default allow" {
+			t.Errorf("Zed posture: got %q, project always_allow_tool_actions must not win", a.Posture)
+		}
+	}
+	if !found {
+		t.Errorf("Zed not listed in agents: %+v", res.Agents)
+	}
+}
+
+func TestZedLegacyPostureAndConfigDir(t *testing.T) {
+	home := t.TempDir()
+	xdg := filepath.Join(home, "xdg")
+	write(t, filepath.Join(xdg, "zed", "settings.json"), `{"agent":{"always_allow_tool_actions":true}}`)
+	res := Run(context.Background(), Env{Home: home, GOOS: "linux", Vars: map[string]string{"XDG_CONFIG_HOME": xdg}})
+	var got string
+	for _, a := range res.Agents {
+		if a.Name == "Zed" {
+			got = a.Posture
+		}
+	}
+	if got != "always_allow_tool_actions" {
+		t.Errorf("legacy posture via XDG_CONFIG_HOME on linux: got %q", got)
+	}
+	// macOS ignores XDG_CONFIG_HOME for Zed; Windows uses APPDATA.
+	if d := zedConfigDir(Env{Home: home, GOOS: "darwin", Vars: map[string]string{"XDG_CONFIG_HOME": xdg}}); d != filepath.Join(home, ".config", "zed") {
+		t.Errorf("darwin: %s", d)
+	}
+	if d := zedConfigDir(Env{Home: home, GOOS: "windows", Vars: map[string]string{"APPDATA": filepath.Join(home, "AppData")}}); d != filepath.Join(home, "AppData", "Zed") {
+		t.Errorf("windows: %s", d)
+	}
+}
+
+func TestStripJSONC(t *testing.T) {
+	cases := map[string]string{
+		`{"a": "http://x//y", // c` + "\n" + `"b": [1, 2, ],}`: `{"a": "http://x//y",  "b": [1, 2 ]}`,
+		`{"s": "a\"b/*not*/c" /* c */}`:                        `{"s": "a\"b/*not*/c"  }`,
+		`[1,/*x*/]`:                                            `[1 ]`,
+		`{"k": 1 /* unterminated`:                              `{"k": 1  `,
+	}
+	for in, want := range cases {
+		if got := string(stripJSONC([]byte(in))); got != want {
+			t.Errorf("stripJSONC(%q)\n got %q\nwant %q", in, got, want)
+		}
+	}
+}
